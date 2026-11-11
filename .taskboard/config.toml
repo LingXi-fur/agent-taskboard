@@ -1,0 +1,5 @@
+target = "main"
+worktree_root = "../{repo}-tasks"
+branch_pattern = "{agent}/{slug}"
+test = "python3 -m unittest discover -s tests"
+id_prefix = "T"
