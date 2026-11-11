@@ -590,6 +590,7 @@ def _print_conflicts(result: dict) -> None:
         ("真实冲突:", result["conflicts"], lambda e: f"{e['a']} <-> {e['b']}: {', '.join(e['files'])}"),
         ("同文件但能自动合并:", result["mergeable"], lambda e: f"{e['a']} <-> {e['b']}: {', '.join(e['files'])}"),
         ("基线漂移:", result["drift"], lambda e: f"{e['task']}: {', '.join(e['files'])}"),
+        ("无法判断:", result["errors"], lambda e: f"{' <-> '.join(e['tasks'])}: {e['message']}"),
     )
     for title, entries, fmt in sections:
         print(title)
@@ -606,13 +607,19 @@ def cmd_conflicts(args: argparse.Namespace) -> int:
     sheets = _load_tasks(repo_root)
     active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
     result = checks.compute_conflicts(active, cfg, repo_root)
-    has_conflict = bool(result["conflicts"])
+
+    if result["errors"]:
+        exit_code = 2
+    elif result["conflicts"]:
+        exit_code = 1
+    else:
+        exit_code = 0
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         _print_conflicts(result)
-    return 1 if has_conflict else 0
+    return exit_code
 
 
 # --------------------------------------------------------------------------- #
@@ -634,6 +641,12 @@ def _build_review_markdown(sheet: Sheet, cfg: config.Config, repo_root: Path) ->
     test = checks.last_test_result(repo_root, sheet.id)
     diffstat = gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root)
     acceptance = extract_section(sheet.body, "## 验收")
+    acceptance_lines = acceptance.split("\n")
+    if acceptance_lines and (
+        acceptance_lines[0] == "## 验收" or acceptance_lines[0].startswith("## 验收 ")
+    ):
+        acceptance_lines = acceptance_lines[1:]
+    acceptance_text = "\n".join(acceptance_lines).strip()
 
     other_active = [
         s for s in _load_tasks(repo_root)
@@ -687,7 +700,7 @@ def _build_review_markdown(sheet: Sheet, cfg: config.Config, repo_root: Path) ->
     lines.append("")
     lines.append("## 验收清单")
     lines.append("")
-    lines.append(acceptance.strip() if acceptance.strip() else "（无验收小节）")
+    lines.append(acceptance_text if acceptance_text else "（无验收小节）")
     lines.append("")
     lines.append("## 审查意见")
     lines.append("")
@@ -702,12 +715,18 @@ def cmd_review(args: argparse.Namespace) -> int:
     if not sheet.base or not sheet.branch:
         raise AtbError(f"task {args.id} not started (no base/branch); run 'atb start' first")
 
-    if sheet.status == "doing":
+    # Build the review first so a failure leaves the status untouched; flip the
+    # in-memory status so the sheet header shows the post-review state.
+    changed = sheet.status == "doing"
+    if changed:
         sheet.status = "review"
+
+    markdown = _build_review_markdown(sheet, cfg, repo_root)
+
+    if changed:
         path = _tasks_dir(repo_root) / f"{sheet.id}.md"
         path.write_text(dump(sheet), encoding="utf-8")
 
-    markdown = _build_review_markdown(sheet, cfg, repo_root)
     if args.out:
         Path(args.out).write_text(markdown + "\n", encoding="utf-8")
         print(f"review written to {args.out}")
@@ -723,6 +742,11 @@ def cmd_review(args: argparse.Namespace) -> int:
 def cmd_rework(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     sheet = _load_task(repo_root, args.id)
+    if sheet.status not in ("doing", "review", "rework"):
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; "
+            "only doing/review/rework can be sent to rework"
+        )
 
     note = args.note
     if note.startswith("@"):

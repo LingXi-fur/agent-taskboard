@@ -7,11 +7,15 @@ the codebase never shells out to git directly.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
 from .errors import GitError
+
+#: A full git object id: 40 hex (SHA-1) or 64 hex (SHA-256).
+_HEX_OID_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def _run(
@@ -115,20 +119,26 @@ def merge_tree_conflicts(
 ) -> list[str]:
     """Return the paths that actually conflict when merging ``a`` into ``b``.
 
-    Uses ``git merge-tree --write-tree --name-only a b`` which performs a real
-    merge *without touching any worktree*.  On a clean merge it returns ``[]``;
-    on a conflict the first stdout line is the resulting tree OID and the
-    remaining lines are the conflicted paths.
+    Uses ``git merge-tree --write-tree --name-only --no-messages a b`` which
+    performs a real merge *without touching any worktree*.  ``--no-messages``
+    keeps the informational "Auto-merging"/"CONFLICT" lines out of stdout, so
+    only the tree OID and the conflicted paths remain.  A clean merge returns
+    ``[]``; a conflict returns the conflicted paths.  If the command fails
+    without producing a tree OID (e.g. an invalid ref), it raises
+    :class:`GitError` carrying git's stderr.
     """
     proc = _run(
-        ["merge-tree", "--write-tree", "--name-only", a, b],
+        ["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b],
         cwd=cwd,
         check=False,
     )
     if proc.returncode == 0:
         return []
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    return lines[1:] if lines else []
+    if not lines or not _HEX_OID_RE.fullmatch(lines[0]):
+        detail = proc.stderr.strip() or "merge-tree failed"
+        raise GitError(f"git merge-tree {a} {b} failed: {detail}")
+    return lines[1:]
 
 
 def diff_stat(base: str, head: str, cwd: str | Path | None = None) -> str:

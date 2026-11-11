@@ -71,27 +71,34 @@ def compute_conflicts(
 ) -> dict[str, list[dict[str, Any]]]:
     """Compute the three conflict categories across active tasks.
 
-    Returns ``{"conflicts": [...], "mergeable": [...], "drift": [...]}`` where
-    ``conflicts`` entries are ``{"a", "b", "files"}`` (real merge conflicts),
-    ``mergeable`` entries are ``{"a", "b", "files"}`` (same files but a clean
-    auto-merge) and ``drift`` entries are ``{"task", "files"}`` (target moved
-    files the task also touched after its baseline).
+    Returns ``{"conflicts": [...], "mergeable": [...], "drift": [...],
+    "errors": [...]}`` where ``conflicts`` entries are ``{"a", "b", "files"}``
+    (real merge conflicts), ``mergeable`` entries are ``{"a", "b", "files"}``
+    (same files but a clean auto-merge), ``drift`` entries are
+    ``{"task", "files"}`` (target moved files the task also touched after its
+    baseline) and ``errors`` entries are ``{"tasks", "message"}`` for tasks or
+    pairs whose state could not be determined (e.g. a deleted branch).
     """
     result: dict[str, list[dict[str, Any]]] = {
         "conflicts": [],
         "mergeable": [],
         "drift": [],
+        "errors": [],
     }
 
     files_by_id: dict[str, list[str]] = {}
     sheets_by_id: dict[str, Sheet] = {}
     for sheet in active_sheets:
         if not sheet.base or not sheet.branch:
+            result["errors"].append(
+                {"tasks": [sheet.id], "message": "task has no base/branch"}
+            )
             continue
         try:
             files_by_id[sheet.id] = task_changed_paths(sheet, cfg, repo_root)
-        except gitops.GitError:
-            continue  # branch already gone: skip this task
+        except gitops.GitError as exc:
+            result["errors"].append({"tasks": [sheet.id], "message": str(exc)})
+            continue
         sheets_by_id[sheet.id] = sheet
 
     ids = sorted(files_by_id)
@@ -105,7 +112,8 @@ def compute_conflicts(
                 conflicts = gitops.merge_tree_conflicts(
                     sheets_by_id[a].branch, sheets_by_id[b].branch, cwd=repo_root
                 )
-            except gitops.GitError:
+            except gitops.GitError as exc:
+                result["errors"].append({"tasks": [a, b], "message": str(exc)})
                 continue
             if conflicts:
                 result["conflicts"].append(

@@ -115,11 +115,58 @@ class BoardReviewTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout)
             self.assertIn("真实冲突", result.stdout)
             self.assertIn("f.txt", result.stdout)
+            self.assertNotIn("Auto-merging", result.stdout)
+            self.assertNotIn("CONFLICT", result.stdout)
 
             result = self._atb(tmp, "conflicts", "--json")
             data = json.loads(result.stdout)
             self.assertEqual(len(data["conflicts"]), 1)
-            self.assertIn("f.txt", data["conflicts"][0]["files"])
+            self.assertEqual(data["conflicts"][0]["files"], ["f.txt"])
+
+    def test_conflicts_lists_all_conflicting_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self._setup_repo(tmp)
+            (tmp / "g.txt").write_text("g1\ng2\ng3\n", encoding="utf-8")
+            self._git(tmp, "add", "-A")
+            self._git(tmp, "commit", "-qm", "add g")
+            self._write_sheet(tmp, "T001", "任务一", allow=("f.txt", "g.txt"))
+            self._write_sheet(tmp, "T002", "任务二", allow=("f.txt", "g.txt"))
+            self.assertEqual(self._atb(tmp, "start", "T001").returncode, 0)
+            self.assertEqual(self._atb(tmp, "start", "T002").returncode, 0)
+
+            for tag in ("T001", "T002"):
+                wt = tmp / "worktrees" / tag
+                self._edit_line(wt / "f.txt", "l5", f"{tag}-l5")
+                self._edit_line(wt / "g.txt", "g2", f"{tag}-g2")
+                self._git(wt, "add", "-A")
+                self._git(wt, "commit", "-qm", f"{tag} edit")
+
+            result = self._atb(tmp, "conflicts", "--json")
+            self.assertEqual(result.returncode, 1, result.stdout)
+            data = json.loads(result.stdout)
+            self.assertEqual(len(data["conflicts"]), 1)
+            self.assertEqual(data["conflicts"][0]["files"], ["f.txt", "g.txt"])
+
+    def test_conflicts_invalid_branch_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self._setup_repo(tmp)
+            self._write_sheet(tmp, "T001", "任务一")
+            self.assertEqual(self._atb(tmp, "start", "T001").returncode, 0)
+            # break the branch so the task state cannot be determined
+            self._git(tmp, "worktree", "remove", str(tmp / "worktrees" / "T001"))
+            self._git(tmp, "branch", "-D", "opencode/t001")
+
+            result = self._atb(tmp, "conflicts", "--json")
+            self.assertEqual(result.returncode, 2, result.stdout)
+            data = json.loads(result.stdout)
+            self.assertTrue(data["errors"])
+            self.assertIn("T001", data["errors"][0]["tasks"])
+
+            result = self._atb(tmp, "conflicts")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("无法判断", result.stdout)
 
     def test_conflicts_mergeable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -227,6 +274,8 @@ class BoardReviewTests(unittest.TestCase):
             self.assertIn("- [ ] item one", result.stdout)
             self.assertIn("## 审查意见", result.stdout)
             self.assertIn("## diffstat", result.stdout)
+            # the section heading from the body must not be repeated verbatim
+            self.assertNotIn("## 验收", result.stdout.split("\n"))
 
             sheet = self._read_sheet(tmp, "T001")
             self.assertEqual(sheet.status, "review")
@@ -247,6 +296,21 @@ class BoardReviewTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(out.exists())
             self.assertIn("## 验收清单", out.read_text(encoding="utf-8"))
+
+    def test_review_failure_keeps_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self._setup_repo(tmp)
+            self._write_sheet(tmp, "T001", "审查任务")
+            self.assertEqual(self._atb(tmp, "start", "T001").returncode, 0)
+
+            # break the branch so review generation fails after start
+            self._git(tmp, "worktree", "remove", str(tmp / "worktrees" / "T001"))
+            self._git(tmp, "branch", "-D", "opencode/t001")
+
+            result = self._atb(tmp, "review", "T001")
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertEqual(self._read_sheet(tmp, "T001").status, "doing")
 
     def test_rework_twice_and_prompt_first(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -286,6 +350,22 @@ class BoardReviewTests(unittest.TestCase):
             sheet = self._read_sheet(tmp, "T001")
             self.assertIn("多行意见第一行", sheet.body)
             self.assertIn("多行意见第二行", sheet.body)
+
+    def test_rework_rejects_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self._setup_repo(tmp)
+            self._write_sheet(tmp, "T001", "已完成")
+            path = tmp / ".taskboard" / "tasks" / "T001.md"
+            sheet = sheet_mod.parse(path.read_text(encoding="utf-8"))
+            sheet.status = "done"
+            path.write_text(sheet_mod.dump(sheet), encoding="utf-8")
+
+            result = self._atb(tmp, "rework", "T001", "--note", "x")
+            self.assertEqual(result.returncode, 2, result.stdout)
+            after = sheet_mod.parse(path.read_text(encoding="utf-8"))
+            self.assertEqual(after.status, "done")
+            self.assertNotIn("## 返工", after.body)
 
 
 if __name__ == "__main__":

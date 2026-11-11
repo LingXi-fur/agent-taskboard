@@ -98,6 +98,42 @@ class GitOpsTests(unittest.TestCase):
             _git(tmp, "commit", "-qm", "c2")
             self.assertEqual(gitops.merge_base(base, "HEAD", cwd=tmp), base)
 
+    def test_merge_tree_conflicts_exact_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            _setup_repo(tmp)
+            _git(tmp, "checkout", "-q", "-b", "A")
+            (tmp / "a.txt").write_text("A\n", encoding="utf-8")
+            _git(tmp, "commit", "-qam", "A")
+            _git(tmp, "checkout", "-q", "main")
+            _git(tmp, "checkout", "-q", "-b", "B")
+            (tmp / "a.txt").write_text("B\n", encoding="utf-8")
+            _git(tmp, "commit", "-qam", "B")
+            _git(tmp, "checkout", "-q", "main")
+            # only the real file, never the "Auto-merging"/"CONFLICT" messages
+            self.assertEqual(gitops.merge_tree_conflicts("A", "B", cwd=tmp), ["a.txt"])
+
+    def test_merge_tree_conflicts_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            _setup_repo(tmp)
+            _git(tmp, "checkout", "-q", "-b", "A")
+            (tmp / "a.txt").write_text("A\n", encoding="utf-8")
+            _git(tmp, "commit", "-qam", "A")
+            _git(tmp, "checkout", "-q", "main")
+            _git(tmp, "checkout", "-q", "-b", "B")
+            (tmp / "b.txt").write_text("B\n", encoding="utf-8")
+            _git(tmp, "commit", "-qam", "B")
+            _git(tmp, "checkout", "-q", "main")
+            self.assertEqual(gitops.merge_tree_conflicts("A", "B", cwd=tmp), [])
+
+    def test_merge_tree_conflicts_invalid_ref_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            _setup_repo(tmp)
+            with self.assertRaises(GitError):
+                gitops.merge_tree_conflicts("main", "does-not-exist", cwd=tmp)
+
     def test_changed_files_rename_returns_both_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
