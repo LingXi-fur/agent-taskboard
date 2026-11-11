@@ -20,3 +20,13 @@ class ConfigError(AtbError):
 
 class SheetError(AtbError):
     """Raised for task-sheet parsing/serialization problems."""
+
+
+class GitError(AtbError):
+    """Raised when a git subprocess fails (exit code 2)."""
+
+
+class CheckError(AtbError):
+    """Raised for check/scope/test failures (exit code 1, see DESIGN §4)."""
+
+    exit_code = 1

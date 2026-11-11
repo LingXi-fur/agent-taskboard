@@ -15,6 +15,12 @@ The ``+++`` fence encloses a small TOML table; everything after the closing
 fence is the Markdown body.  ``tomllib`` can only read TOML, so serialization
 is done with a small hand-written TOML writer that supports the value types a
 task sheet can contain.
+
+Parsing accepts both LF and CRLF line endings (a leading UTF-8 BOM is also
+tolerated); ``dump`` *always* emits LF (``\\n``) regardless of the input, and
+never emits a BOM.  Unknown header keys are preserved: keys that are not a
+bare ``[A-Za-z0-9_-]+`` token are quoted, and nested dict values are written
+as inline tables so the sheet survives a parse/dump round trip.
 """
 
 from __future__ import annotations
@@ -89,10 +95,21 @@ class Sheet:
 # --------------------------------------------------------------------------- #
 
 def _split(text: str) -> tuple[str, str]:
-    """Split a sheet into ``(toml_header, body)``."""
+    """Split a sheet into ``(toml_header, body)``.
+
+    Accepts LF and CRLF line endings (so ``+++\\r`` is a valid closing line)
+    and strips a leading UTF-8 BOM.  The returned header and body are
+    normalized to LF.  ``dump`` always writes LF, so parsing is stable across
+    a parse/dump round trip even for CRLF or BOM-prefixed input.
+    """
+    if text.startswith("\ufeff"):
+        text = text[len("\ufeff"):]
     if not text.startswith("+++"):
         raise SheetError("task sheet must begin with a '+++' header line")
-    lines = text.split("\n")
+    # Split on \n but treat a trailing \r on each line as part of the CRLF
+    # pair, so ``+++\\r`` counts as a closing ``+++`` line.  Using split("\n")
+    # (rather than splitlines()) keeps the body's trailing newline intact.
+    lines = [line[:-1] if line.endswith("\r") else line for line in text.split("\n")]
     close: int | None = None
     for index in range(1, len(lines)):
         if lines[index] == "+++":
@@ -226,13 +243,32 @@ def _format_value(value: Any) -> str:
         if value != value or value in (float("inf"), float("-inf")):
             raise SheetError("cannot serialize a non-finite float into a TOML header")
         return repr(value)
+    if isinstance(value, dict):
+        return "{" + ", ".join(
+            f"{_format_key(key)} = {_format_value(item)}"
+            for key, item in value.items()
+        ) + "}"
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_format_value(item) for item in value) + "]"
     raise SheetError(f"unsupported value type for TOML header: {type(value).__name__}")
 
 
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _format_key(key: str) -> str:
+    """Format a TOML key: bare when ``[A-Za-z0-9_-]+``, otherwise quoted."""
+    if _BARE_KEY_RE.fullmatch(key):
+        return key
+    return _format_string(key)
+
+
 def dump(sheet: Sheet) -> str:
-    """Serialize ``sheet`` back to text so that ``parse(dump(x)) == x``."""
+    """Serialize ``sheet`` back to text so that ``parse(dump(x)) == x``.
+
+    The output always uses LF (``\\n``) line endings, never CRLF, and never
+    includes a BOM, even if the original input had either.
+    """
     parts = ["+++"]
     for key in HEADER_FIELDS:
         value = getattr(sheet, key)
@@ -240,7 +276,7 @@ def dump(sheet: Sheet) -> str:
             continue
         parts.append(f"{key} = {_format_value(value)}")
     for key, value in sheet.extra.items():
-        parts.append(f"{key} = {_format_value(value)}")
+        parts.append(f"{_format_key(key)} = {_format_value(value)}")
     parts.append("+++")
     return "\n".join(parts) + "\n" + sheet.body
 

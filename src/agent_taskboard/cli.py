@@ -1,20 +1,23 @@
-"""Command-line interface: ``atb init/new/list/show``.
+"""Command-line interface: ``atb init/new/list/show/start/prompt/check``.
 
-This module only wires arguments to output; the parsing/scope logic lives in
-``config.py``, ``sheet.py`` and ``scope.py``.
+This module only wires arguments to output; the parsing/scope/git logic lives
+in ``config.py``, ``sheet.py``, ``scope.py``, ``gitops.py`` and ``prompts.py``.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import subprocess
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
-from .errors import AtbError
+from . import config, gitops, prompts, scope
+from .errors import AtbError, CheckError
 from .sheet import Sheet, TEMPLATE_BODY, dump, next_id, parse, slugify, to_dict
 
 # --------------------------------------------------------------------------- #
@@ -58,11 +61,18 @@ def _format_field(key: str, value: object) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Commands
+# Shared helpers
 # --------------------------------------------------------------------------- #
 
 def _tasks_dir(repo_root: Path) -> Path:
     return repo_root / ".taskboard" / "tasks"
+
+
+def _load_task(repo_root: Path, task_id: str) -> Sheet:
+    path = _tasks_dir(repo_root) / f"{task_id}.md"
+    if not path.exists():
+        raise AtbError(f"task {task_id!r} not found")
+    return parse(path.read_text(encoding="utf-8"))
 
 
 def _load_tasks(repo_root: Path, status: str | None = None) -> list[Sheet]:
@@ -80,6 +90,18 @@ def _load_tasks(repo_root: Path, status: str | None = None) -> list[Sheet]:
         sheets.append(sheet)
     return sheets
 
+
+def _render_branch(pattern: str, agent: str, slug: str) -> str:
+    return pattern.replace("{agent}", agent).replace("{slug}", slug)
+
+
+def _dedup(paths: list[str]) -> list[str]:
+    return list(dict.fromkeys(paths))
+
+
+# --------------------------------------------------------------------------- #
+# init / new / list / show
+# --------------------------------------------------------------------------- #
 
 def cmd_init(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
@@ -171,10 +193,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
-    path = _tasks_dir(repo_root) / f"{args.id}.md"
-    if not path.exists():
-        raise AtbError(f"task {args.id!r} not found")
-    sheet = parse(path.read_text(encoding="utf-8"))
+    sheet = _load_task(repo_root, args.id)
 
     if args.json:
         print(json.dumps(to_dict(sheet), ensure_ascii=False, indent=2))
@@ -187,6 +206,254 @@ def cmd_show(args: argparse.Namespace) -> int:
             print()
             print(body.strip("\n"))
     return 0
+
+
+# --------------------------------------------------------------------------- #
+# start
+# --------------------------------------------------------------------------- #
+
+def cmd_start(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+    tasks_dir = _tasks_dir(repo_root)
+
+    if sheet.status not in ("todo", "rework"):
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; only 'todo' or 'rework' can start"
+        )
+
+    # dependency check: all depends must be done (--force skips with a warning)
+    unmet: list[str] = []
+    for dep in sheet.depends:
+        dep_path = tasks_dir / f"{dep}.md"
+        if not dep_path.exists() or parse(dep_path.read_text(encoding="utf-8")).status != "done":
+            unmet.append(dep)
+    if unmet:
+        message = f"task {args.id} depends on unfinished task(s): {', '.join(unmet)}"
+        if not args.force:
+            raise CheckError(message)
+        print(f"warning: {message} (continuing because of --force)", file=sys.stderr)
+
+    # baseline: --base > existing base > config.target HEAD
+    if args.base:
+        base = gitops.rev_parse(args.base, cwd=repo_root)
+    elif sheet.base:
+        base = sheet.base
+    else:
+        base = gitops.rev_parse(cfg.target, cwd=repo_root)
+
+    # branch: reuse the sheet's, otherwise generate from branch_pattern
+    if sheet.branch:
+        branch = sheet.branch
+    else:
+        slug = slugify(sheet.title, sheet.id)
+        branch = _render_branch(cfg.branch_pattern, sheet.agent, slug)
+
+    worktree = config.resolve_worktree_root(cfg) / sheet.id
+
+    if sheet.status == "todo":
+        if gitops.branch_exists(branch, cwd=repo_root):
+            raise AtbError(f"branch {branch!r} already exists")
+        if worktree.exists():
+            raise AtbError(f"worktree path {worktree} already exists")
+        gitops.worktree_add(worktree, branch, base, cwd=repo_root)
+    else:  # rework: reuse the existing worktree and branch
+        if not worktree.exists():
+            raise AtbError(f"worktree path {worktree} does not exist (cannot rework)")
+
+    # write base/branch/status back, keep the body untouched; never auto-commit
+    sheet.base = base
+    sheet.branch = branch
+    sheet.status = "doing"
+    sheet_path = tasks_dir / f"{sheet.id}.md"
+    sheet_path.write_text(dump(sheet), encoding="utf-8")
+
+    if args.json:
+        print(json.dumps({
+            "id": sheet.id,
+            "status": sheet.status,
+            "base": base,
+            "branch": branch,
+            "worktree": str(worktree),
+        }, ensure_ascii=False))
+    else:
+        print(f"started {sheet.id}: branch={branch}")
+        print(f"worktree: {worktree}")
+        print(f"base: {base}")
+        print(f"status -> doing")
+        print(f"task sheet updated ({sheet_path}); commit it yourself (not auto-committed)")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# prompt
+# --------------------------------------------------------------------------- #
+
+def cmd_prompt(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+    if not sheet.branch:
+        raise AtbError(f"task {args.id} has no branch; run 'atb start {args.id}' first")
+
+    worktree = config.resolve_worktree_root(cfg) / sheet.id
+    test_cmd = sheet.test or cfg.test
+    text = prompts.render_prompt(
+        sheet, str(worktree), sheet.branch, test_cmd, lang=args.lang
+    )
+
+    if args.json:
+        print(json.dumps({
+            "text": text,
+            "worktree": str(worktree),
+            "branch": sheet.branch,
+        }, ensure_ascii=False))
+    else:
+        print(text)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# check
+# --------------------------------------------------------------------------- #
+
+def _last_4kb(text: str) -> str:
+    data = text.encode("utf-8")
+    if len(data) <= 4096:
+        return text
+    return data[-4096:].decode("utf-8", errors="replace")
+
+
+def _run_test(command: str, worktree: Path, timeout: int) -> dict:
+    argv = shlex.split(command)
+    start = time.monotonic()
+    if not argv:
+        return {"exit_code": 2, "duration": 0.0, "output": "(empty test command)"}
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(worktree),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {
+            "exit_code": 127,
+            "duration": round(time.monotonic() - start, 3),
+            "output": f"command not found: {argv[0]}",
+        }
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        code = proc.returncode
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, _ = proc.communicate()
+        out = (out or "") + f"\n[timeout after {timeout}s]"
+        code = -1
+    return {
+        "exit_code": code,
+        "duration": round(time.monotonic() - start, 3),
+        "output": out or "",
+    }
+
+
+def _append_run(repo_root: Path, task_id: str, command: str, result: dict) -> None:
+    runs_dir = repo_root / ".taskboard" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "exit_code": result["exit_code"],
+        "duration": result["duration"],
+        "command": command,
+        "output": _last_4kb(result["output"]),
+    }
+    path = runs_dir / f"{task_id}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+
+    if not sheet.base:
+        raise AtbError(f"task {args.id} not started (base is empty); run 'atb start {args.id}' first")
+    if not sheet.branch:
+        raise AtbError(f"task {args.id} has no branch")
+
+    worktree = config.resolve_worktree_root(cfg) / sheet.id
+
+    committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+    uncommitted = gitops.uncommitted_files(worktree) if worktree.exists() else []
+    all_paths = _dedup(committed + uncommitted)
+
+    classification = scope.classify(all_paths, sheet.allow, sheet.deny)
+    denied = [p for p in all_paths if classification[p] == "denied"]
+    outside = [p for p in all_paths if classification[p] == "outside"]
+
+    ahead, behind = gitops.rev_list_count(sheet.base, sheet.branch, cwd=repo_root)
+
+    exit_code = 1 if (denied or outside) else 0
+
+    test_result: dict | None = None
+    if args.test:
+        if not worktree.exists():
+            raise AtbError(f"worktree {worktree} does not exist")
+        command = sheet.test or cfg.test
+        test_result = _run_test(command, worktree, cfg.test_timeout)
+        _append_run(repo_root, sheet.id, command, test_result)
+        if test_result["exit_code"] != 0:
+            exit_code = 1
+
+    if uncommitted and args.strict:
+        exit_code = 1
+
+    if args.json:
+        payload: dict = {
+            "id": sheet.id,
+            "ahead": ahead,
+            "behind": behind,
+            "changed_files": len(all_paths),
+            "denied": denied,
+            "outside": outside,
+            "uncommitted": uncommitted,
+            "ok": exit_code == 0,
+        }
+        if test_result is not None:
+            payload["test"] = test_result
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"ahead: {ahead}")
+        print(f"behind: {behind}")
+        print(f"changed files: {len(all_paths)}")
+        print("denied:")
+        if denied:
+            for path in denied:
+                print(f"  - {path}")
+        else:
+            print("  (none)")
+        print("outside:")
+        if outside:
+            for path in outside:
+                print(f"  - {path}")
+        else:
+            print("  (none)")
+        print("uncommitted:")
+        if uncommitted:
+            for path in uncommitted:
+                print(f"  - {path}")
+        else:
+            print("  (none)")
+        if test_result is not None:
+            print(f"test: exit {test_result['exit_code']} in {test_result['duration']}s")
+
+    if uncommitted and not args.strict:
+        print("warning: uncommitted changes present (use --strict to fail)", file=sys.stderr)
+
+    return exit_code
 
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +489,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_show.add_argument("id", help="task id, e.g. T001")
     p_show.add_argument("--json", action="store_true")
     p_show.set_defaults(func=cmd_show)
+
+    p_start = sub.add_parser("start", help="validate deps and open a worktree for a task")
+    p_start.add_argument("id", help="task id, e.g. T001")
+    p_start.add_argument("--base", help="baseline commit for the worktree")
+    p_start.add_argument("--force", action="store_true", help="skip the dependency check")
+    p_start.add_argument("--json", action="store_true")
+    p_start.set_defaults(func=cmd_start)
+
+    p_prompt = sub.add_parser("prompt", help="print the agent handoff prompt")
+    p_prompt.add_argument("id", help="task id, e.g. T001")
+    p_prompt.add_argument("--lang", choices=["zh", "en"], default="zh", help="prompt language")
+    p_prompt.add_argument("--json", action="store_true")
+    p_prompt.set_defaults(func=cmd_prompt)
+
+    p_check = sub.add_parser("check", help="scope-check a task's changes")
+    p_check.add_argument("id", help="task id, e.g. T001")
+    p_check.add_argument("--test", action="store_true", help="run the test command in the worktree")
+    p_check.add_argument("--strict", action="store_true", help="fail on uncommitted changes too")
+    p_check.add_argument("--json", action="store_true")
+    p_check.set_defaults(func=cmd_check)
 
     return parser
 
