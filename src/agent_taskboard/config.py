@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "branch_pattern": "{agent}/{slug}",
     "test": "python3 -m unittest discover -s tests",
     "id_prefix": "T",
+    "test_timeout": 1800,
 }
 
 #: The known keys and the type each one must have.
@@ -33,6 +34,7 @@ TYPES: dict[str, type] = {
     "branch_pattern": str,
     "test": str,
     "id_prefix": str,
+    "test_timeout": int,
 }
 
 #: Text written by ``atb init`` when no config exists yet.
@@ -42,6 +44,7 @@ worktree_root = "../{repo}-tasks"
 branch_pattern = "{agent}/{slug}"
 test = "python3 -m unittest discover -s tests"
 id_prefix = "T"
+test_timeout = 1800
 """
 
 
@@ -82,6 +85,7 @@ class Config:
     branch_pattern: str = DEFAULTS["branch_pattern"]
     test: str = DEFAULTS["test"]
     id_prefix: str = DEFAULTS["id_prefix"]
+    test_timeout: int = DEFAULTS["test_timeout"]
     extra: dict[str, Any] = field(default_factory=dict)
     repo_root: Path = field(default_factory=Path)
     config_path: Path = field(default_factory=Path)
@@ -120,6 +124,7 @@ def load_config(repo_root: str | os.PathLike) -> Config:
         branch_pattern=merged["branch_pattern"],
         test=merged["test"],
         id_prefix=merged["id_prefix"],
+        test_timeout=merged["test_timeout"],
         extra=extra,
         repo_root=repo_root,
         config_path=config_path,

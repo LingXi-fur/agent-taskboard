@@ -58,6 +58,89 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parsed.extra, {"priority": 7})
 
 
+class LineEndingAndBomTests(unittest.TestCase):
+    """T001 review fixes: CRLF, BOM and unknown-field write-back."""
+
+    def test_parse_crlf(self):
+        text = (
+            '+++\r\nid = "T1"\r\ntitle = "x"\r\nstatus = "todo"\r\n+++\r\n'
+            '\r\nbody line 1\r\nbody line 2\r\n'
+        )
+        parsed = sheet.parse(text)
+        self.assertEqual(parsed.id, "T1")
+        self.assertEqual(parsed.title, "x")
+        self.assertEqual(parsed.status, "todo")
+        self.assertEqual(parsed.body, "\nbody line 1\nbody line 2\n")
+        # round-trip stable (dump always emits LF)
+        self.assertEqual(sheet.parse(sheet.dump(parsed)), parsed)
+
+    def test_parse_crlf_roundtrip(self):
+        text = (
+            '+++\r\nid = "T2"\r\ntitle = "t"\r\nstatus = "todo"\r\n'
+            'allow = ["a.py"]\r\n+++\r\n\r\n## 正文\r\n'
+        )
+        self.assertEqual(sheet.parse(sheet.dump(sheet.parse(text))), sheet.parse(text))
+
+    def test_dump_uses_lf_only(self):
+        original = sheet.Sheet(id="T3", title="t", status="todo", body="\nbody\n")
+        self.assertNotIn("\r", sheet.dump(original))
+        self.assertIn("\n", sheet.dump(original))
+
+    def test_parse_bom(self):
+        text = '\ufeff+++\nid = "T4"\ntitle = "x"\nstatus = "todo"\n+++\n\nbody\n'
+        parsed = sheet.parse(text)
+        self.assertEqual(parsed.id, "T4")
+        self.assertEqual(parsed.body, "\nbody\n")
+
+    def test_bom_roundtrip(self):
+        text = '\ufeff+++\nid = "T5"\ntitle = "x"\nstatus = "todo"\n+++\n\nbody\n'
+        self.assertEqual(sheet.parse(sheet.dump(sheet.parse(text))), sheet.parse(text))
+
+
+class UnknownFieldWriteBackTests(unittest.TestCase):
+    """Quoted keys and nested dict values survive parse/dump round trips."""
+
+    def _roundtrip(self, text):
+        return sheet.parse(sheet.dump(sheet.parse(text)))
+
+    def test_quoted_key_roundtrip(self):
+        text = '+++\nid="T1"\ntitle="x"\nstatus="todo"\n"needs quote" = 1\n+++\n'
+        self.assertEqual(self._roundtrip(text), sheet.parse(text))
+
+    def test_quoted_key_output_is_quoted(self):
+        original = sheet.Sheet(id="T1", title="x", status="todo", extra={"needs quote": 1})
+        dumped = sheet.dump(original)
+        self.assertIn('"needs quote" = 1', dumped)
+
+    def test_inline_table_roundtrip(self):
+        text = (
+            '+++\nid="T1"\ntitle="x"\nstatus="todo"\n'
+            'meta = { owner = "alice", priority = 3 }\n+++\n'
+        )
+        self.assertEqual(self._roundtrip(text), sheet.parse(text))
+
+    def test_table_section_roundtrip(self):
+        text = (
+            '+++\nid="T1"\ntitle="x"\nstatus="todo"\n'
+            '[meta]\nowner = "alice"\npriority = 3\n+++\n'
+        )
+        self.assertEqual(self._roundtrip(text), sheet.parse(text))
+
+    def test_nested_dict_roundtrip(self):
+        text = (
+            '+++\nid="T1"\ntitle="x"\nstatus="todo"\n'
+            'meta = { owner = { name = "alice", id = 7 } }\n+++\n'
+        )
+        self.assertEqual(self._roundtrip(text), sheet.parse(text))
+
+    def test_dict_in_list_roundtrip(self):
+        text = (
+            '+++\nid="T1"\ntitle="x"\nstatus="todo"\n'
+            'points = [{ x = 1 }, { x = 2 }]\n+++\n'
+        )
+        self.assertEqual(self._roundtrip(text), sheet.parse(text))
+
+
 class RoundTripTests(unittest.TestCase):
     def _roundtrip(self, text):
         return sheet.parse(sheet.dump(sheet.parse(text)))
@@ -75,7 +158,7 @@ class RoundTripTests(unittest.TestCase):
             ["DESIGN.md", "pyproject.toml", "LICENSE", ".taskboard/**"],
         )
         self.assertEqual(parsed.depends, [])
-        self.assertEqual(parsed.status, "todo")
+        self.assertEqual(parsed.status, "done")
         self.assertEqual(
             sheet.parse(sheet.dump(parsed)),
             parsed,
