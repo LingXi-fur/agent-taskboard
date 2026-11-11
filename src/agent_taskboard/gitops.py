@@ -110,6 +110,33 @@ def merge_base(a: str, b: str, cwd: str | Path | None = None) -> str:
     return proc.stdout.strip()
 
 
+def merge_tree_conflicts(
+    a: str, b: str, cwd: str | Path | None = None
+) -> list[str]:
+    """Return the paths that actually conflict when merging ``a`` into ``b``.
+
+    Uses ``git merge-tree --write-tree --name-only a b`` which performs a real
+    merge *without touching any worktree*.  On a clean merge it returns ``[]``;
+    on a conflict the first stdout line is the resulting tree OID and the
+    remaining lines are the conflicted paths.
+    """
+    proc = _run(
+        ["merge-tree", "--write-tree", "--name-only", a, b],
+        cwd=cwd,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return []
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    return lines[1:] if lines else []
+
+
+def diff_stat(base: str, head: str, cwd: str | Path | None = None) -> str:
+    """Return the ``git diff --stat base...head`` output."""
+    proc = _run(["diff", "--stat", f"{base}...{head}"], cwd=cwd)
+    return proc.stdout.rstrip("\n")
+
+
 def _dedup(paths: Iterable[str]) -> list[str]:
     """Deduplicate ``paths`` while preserving order."""
     seen: set[str] = set()
