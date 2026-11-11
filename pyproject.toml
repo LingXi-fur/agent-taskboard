@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-taskboard"
+version = "0.0.1"
+description = "Hand off, scope-check, conflict-check, and review parallel AI coding agent tasks with git worktrees."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "LingXi-fur" }]
+keywords = ["ai-agents", "claude-code", "codex", "opencode", "git-worktree", "code-review", "local-first"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.scripts]
+atb = "agent_taskboard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
