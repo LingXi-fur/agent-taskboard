@@ -28,6 +28,8 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 Requires **Python 3.11+** and **Git 2.38+** (for `git merge-tree --write-tree`). Zero third-party Python dependencies.
 
+Install from source (needs network access once, to fetch the build dependency `setuptools>=70.1`):
+
 ```bash
 pip install -e .
 ```
@@ -38,10 +40,16 @@ Confirm the install with:
 atb --version
 ```
 
-Or run directly from source without installing:
+If you are offline, skip the install and run straight from `src`:
 
 ```bash
 PYTHONPATH=src python3 -m agent_taskboard --help
+```
+
+A shell alias keeps that short:
+
+```bash
+alias atb='PYTHONPATH=/path/to/agent-taskboard/src python3 -m agent_taskboard'
 ```
 
 To see a complete end-to-end demo in a temporary git repository (no changes made to this repo):

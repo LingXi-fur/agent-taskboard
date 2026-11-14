@@ -1,6 +1,7 @@
 """Release-readiness tests: version consistency and friendly error messages."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,27 @@ class VersionTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("0.1.0", result.stdout)
+
+
+class PackagingTests(unittest.TestCase):
+    def test_build_requirements(self):
+        """setuptools>=70.1 bundles bdist_wheel, so no separate wheel is needed."""
+        import tomllib
+
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        requires = data["build-system"]["requires"]
+
+        self.assertFalse(
+            any("wheel" in req.lower() for req in requires),
+            f"build-system.requires must not list wheel: {requires}",
+        )
+        setuptools_reqs = [r for r in requires if r.lower().startswith("setuptools")]
+        self.assertEqual(len(setuptools_reqs), 1, requires)
+        match = re.search(r">=\s*(\d+)\.(\d+)", setuptools_reqs[0])
+        self.assertIsNotNone(match, setuptools_reqs[0])
+        self.assertGreaterEqual(
+            (int(match.group(1)), int(match.group(2))), (70, 1), setuptools_reqs[0]
+        )
 
 
 class FriendlyErrorTests(_Base):
