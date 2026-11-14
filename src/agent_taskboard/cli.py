@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import checks, config, gitops, prompts, render, scope
-from .errors import AtbError, CheckError
+from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
     Sheet,
@@ -30,6 +30,23 @@ from .sheet import (
     slugify,
     to_dict,
 )
+
+
+def get_version() -> str:
+    """Return the package version, preferring installed metadata.
+
+    Falls back to the in-package ``__version__`` when the distribution is not
+    installed (e.g. running straight from ``src`` via ``PYTHONPATH``).
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("agent-taskboard")
+    except PackageNotFoundError:
+        from . import __version__
+
+        return __version__
+
 
 # --------------------------------------------------------------------------- #
 # Rendering helpers
@@ -79,11 +96,28 @@ def _tasks_dir(repo_root: Path) -> Path:
     return repo_root / ".taskboard" / "tasks"
 
 
+def _require_initialized(repo_root: Path) -> None:
+    """Raise a friendly error when ``.taskboard/`` has not been initialised."""
+    if not (repo_root / ".taskboard" / "config.toml").exists():
+        raise ConfigError("no .taskboard/ found here; run 'atb init' first")
+
+
+def _require_commits(repo_root: Path) -> None:
+    """Raise a friendly error when the repository has no commits yet."""
+    if not gitops.has_commits(repo_root):
+        raise ConfigError(
+            "this repository has no commits yet; make an initial commit first"
+        )
+
+
 def _load_task(repo_root: Path, task_id: str) -> Sheet:
     path = _tasks_dir(repo_root) / f"{task_id}.md"
     if not path.exists():
         raise AtbError(f"task {task_id!r} not found")
-    return parse(path.read_text(encoding="utf-8"))
+    try:
+        return parse(path.read_text(encoding="utf-8"))
+    except SheetError as exc:
+        raise SheetError(f"{path.name}: {exc}") from exc
 
 
 def _load_tasks(repo_root: Path, status: str | None = None) -> list[Sheet]:
@@ -151,6 +185,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_new(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     tasks_dir = _tasks_dir(repo_root)
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -187,6 +222,7 @@ def cmd_new(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     sheets = _load_tasks(repo_root, status=args.status)
 
     if args.json:
@@ -204,6 +240,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     sheet = _load_task(repo_root, args.id)
 
     if args.json:
@@ -225,6 +262,8 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 def cmd_start(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
     tasks_dir = _tasks_dir(repo_root)
@@ -303,6 +342,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_prompt(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
     if not sheet.branch:
@@ -387,6 +427,8 @@ def _append_run(repo_root: Path, task_id: str, command: str, result: dict) -> No
 
 def cmd_check(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
 
@@ -563,6 +605,7 @@ def _status_cells(row: dict) -> tuple[str, ...]:
 
 def cmd_status(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
     rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
@@ -603,6 +646,8 @@ def _print_conflicts(result: dict) -> None:
 
 def cmd_conflicts(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
     active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
@@ -681,6 +726,8 @@ def _build_review_markdown(
 
 def cmd_review(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
     if not sheet.base or not sheet.branch:
@@ -712,6 +759,7 @@ def cmd_review(args: argparse.Namespace) -> int:
 
 def cmd_rework(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     sheet = _load_task(repo_root, args.id)
     if sheet.status not in ("doing", "review", "rework"):
         raise AtbError(
@@ -767,6 +815,8 @@ def _done_blockers(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[st
 
 def cmd_done(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
 
@@ -845,6 +895,7 @@ def cmd_done(args: argparse.Namespace) -> int:
 
 def cmd_board(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
     rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
@@ -871,6 +922,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="atb",
         description="agent-taskboard: hand off and review parallel AI coding tasks.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"atb {get_version()}"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

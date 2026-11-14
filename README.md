@@ -32,6 +32,12 @@ Requires **Python 3.11+** and **Git 2.38+** (for `git merge-tree --write-tree`).
 pip install -e .
 ```
 
+Confirm the install with:
+
+```bash
+atb --version
+```
+
 Or run directly from source without installing:
 
 ```bash
@@ -43,6 +49,17 @@ To see a complete end-to-end demo in a temporary git repository (no changes made
 ```bash
 bash examples/walkthrough.sh
 ```
+
+To preview the static HTML board, generate it in any repository that has task
+sheets and open the file in a browser:
+
+```bash
+atb board --html board.html
+```
+
+Then double-click `board.html`, or run `python3 -m http.server` in that
+directory and open the printed URL. The board is a single self-contained file
+(inline CSS, dark-first) and loads no external resources.
 
 ## Task Sheet Format
 

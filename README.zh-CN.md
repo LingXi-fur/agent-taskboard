@@ -32,6 +32,12 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 pip install -e .
 ```
 
+确认安装：
+
+```bash
+atb --version
+```
+
 也可以不安装，直接从源码运行：
 
 ```bash
@@ -43,6 +49,15 @@ PYTHONPATH=src python3 -m agent_taskboard --help
 ```bash
 bash examples/walkthrough.sh
 ```
+
+想预览静态 HTML 看板，可在任意含任务单的仓库中生成后，用浏览器打开：
+
+```bash
+atb board --html board.html
+```
+
+然后双击 `board.html`，或在该目录运行 `python3 -m http.server` 后打开提示的地址。
+看板是单文件、自包含的（内联 CSS，暗色优先），不加载任何外部资源。
 
 ## 任务单格式
 

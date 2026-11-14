@@ -70,8 +70,12 @@ def find_repo_root(start: str | os.PathLike | None = None) -> Path:
     except FileNotFoundError as exc:  # git is not on PATH
         raise ConfigError("git executable not found on PATH") from exc
     if proc.returncode != 0:
-        detail = proc.stderr.strip() or "not a git repository"
-        raise ConfigError(f"could not locate repository root: {detail}")
+        detail = proc.stderr.strip()
+        if "not a git repository" in detail.lower():
+            raise ConfigError("not inside a git repository")
+        raise ConfigError(
+            f"could not locate repository root: {detail or 'unknown error'}"
+        )
     return Path(proc.stdout.strip()).resolve()
 
 
