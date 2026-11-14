@@ -92,10 +92,10 @@ created = 2026-11-14T08:00:00Z
 | `atb check ID [--test] [--strict] [--json]` | Scope-check committed & uncommitted changes; optionally run tests in worktree | Implemented |
 | `atb status [--json]` | Show board table: status, branch, ahead/behind, files, violations, last test | Implemented |
 | `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
-| `atb review ID [--out FILE]` | Generate a Markdown review sheet combining checks, tests, diffstat, and checklist | Implemented |
+| `atb review ID [--out FILE] [--lang zh\|en]` | Generate a Markdown review sheet combining checks, tests, diffstat, and checklist (Chinese/English) | Implemented |
 | `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
-| `atb done ID [--merge] [--clean]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree | Planned |
-| `atb board --html out.html` | Export a standalone static HTML task board | Planned |
+| `atb done ID [--merge] [--clean] [--force]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree and branch | Implemented |
+| `atb board --html out.html` | Export a standalone static HTML task board | Implemented |
 
 ## Principles
 
