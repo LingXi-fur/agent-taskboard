@@ -147,6 +147,46 @@ def diff_stat(base: str, head: str, cwd: str | Path | None = None) -> str:
     return proc.stdout.rstrip("\n")
 
 
+def current_branch(cwd: str | Path | None = None) -> str:
+    """Return the current branch name, raising :class:`GitError` if detached."""
+    proc = _run(["symbolic-ref", "--short", "-q", "HEAD"], cwd=cwd, check=False)
+    if proc.returncode != 0:
+        raise GitError("not on a branch (detached HEAD)")
+    return proc.stdout.strip()
+
+
+def is_main_worktree(cwd: str | Path | None = None) -> bool:
+    """Return whether ``cwd`` is the main worktree (not a linked one)."""
+    entries = worktree_list(cwd=cwd)
+    if not entries:
+        return False
+    main_path = Path(entries[0]["path"]).resolve()
+    top = Path(_run(["rev-parse", "--show-toplevel"], cwd=cwd).stdout.strip()).resolve()
+    return main_path == top
+
+
+def merge_no_ff(
+    branch: str, message: str, cwd: str | Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run ``git merge --no-ff <branch> -m <message>`` without raising."""
+    return _run(["merge", "--no-ff", branch, "-m", message], cwd=cwd, check=False)
+
+
+def merge_abort(cwd: str | Path | None = None) -> None:
+    """Abort an in-progress merge (best effort; ignores failures)."""
+    _run(["merge", "--abort"], cwd=cwd, check=False)
+
+
+def worktree_remove(path: str | Path, cwd: str | Path | None = None) -> None:
+    """Remove a worktree; refuses (``GitError``) when it has local changes."""
+    _run(["worktree", "remove", str(path)], cwd=cwd)
+
+
+def branch_delete(name: str, cwd: str | Path | None = None) -> None:
+    """Delete a fully-merged branch with ``-d`` (never the force flag)."""
+    _run(["branch", "-d", name], cwd=cwd)
+
+
 def _dedup(paths: Iterable[str]) -> list[str]:
     """Deduplicate ``paths`` while preserving order."""
     seen: set[str] = set()

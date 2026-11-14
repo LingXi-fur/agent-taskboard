@@ -92,10 +92,10 @@ created = 2026-11-14T08:00:00Z
 | `atb check ID [--test] [--strict] [--json]` | 校验已提交与未提交改动的范围，可选在 worktree 中运行测试 | 已实现 |
 | `atb status [--json]` | 展示任务看板：状态、分支、领先/落后提交、改动文件数、越界数、最近测试 | 已实现 |
 | `atb conflicts [--json]` | 两两对比活跃任务的文件重叠、`merge-tree` 真实冲突与基线漂移 | 已实现 |
-| `atb review ID [--out FILE]` | 生成汇总检查、测试、diffstat 与验收清单的 Markdown 审查表 | 已实现 |
+| `atb review ID [--out FILE] [--lang zh\|en]` | 生成汇总检查、测试、diffstat 与验收清单的 Markdown 审查表（中/英） | 已实现 |
 | `atb rework ID --note "..."` | 将状态改为 `rework` 并追加意见，使下次 `atb prompt` 优先展示 | 已实现 |
-| `atb done ID [--merge] [--clean]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree | planned |
-| `atb board --html out.html` | 导出单文件静态 HTML 看板 | planned |
+| `atb done ID [--merge] [--clean] [--force]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree 与分支 | 已实现 |
+| `atb board --html out.html` | 导出单文件静态 HTML 看板 | 已实现 |
 
 ## 设计原则
 

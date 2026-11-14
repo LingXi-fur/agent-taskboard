@@ -16,7 +16,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import checks, config, gitops, prompts, scope
+from . import checks, config, gitops, prompts, render, scope
 from .errors import AtbError, CheckError
 from .sheet import (
     STATUSES,
@@ -633,79 +633,50 @@ def _conflicts_for(sheet_id: str, result: dict) -> tuple[list, list, list]:
     return conflicts, mergeable, drift
 
 
-def _build_review_markdown(sheet: Sheet, cfg: config.Config, repo_root: Path) -> str:
+def _acceptance_text(body: str) -> str:
+    """Return the ``## 验收`` section content without its heading line."""
+    acceptance = extract_section(body, "## 验收")
+    lines = acceptance.split("\n")
+    if lines and (lines[0] == "## 验收" or lines[0].startswith("## 验收 ")):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
+    """Gather everything the review template needs into one plain dict."""
     committed = checks.task_committed(sheet, repo_root)
     uncommitted = checks.task_uncommitted(sheet, cfg)
     all_paths = list(dict.fromkeys(committed + uncommitted))
     denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
-    test = checks.last_test_result(repo_root, sheet.id)
-    diffstat = gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root)
-    acceptance = extract_section(sheet.body, "## 验收")
-    acceptance_lines = acceptance.split("\n")
-    if acceptance_lines and (
-        acceptance_lines[0] == "## 验收" or acceptance_lines[0].startswith("## 验收 ")
-    ):
-        acceptance_lines = acceptance_lines[1:]
-    acceptance_text = "\n".join(acceptance_lines).strip()
-
     other_active = [
         s for s in _load_tasks(repo_root)
         if s.status in checks.ACTIVE_STATUSES and s.id != sheet.id
     ]
     result = checks.compute_conflicts([sheet] + other_active, cfg, repo_root)
     conflicts, mergeable, drift = _conflicts_for(sheet.id, result)
+    return {
+        "id": sheet.id,
+        "title": sheet.title,
+        "agent": sheet.agent,
+        "status": sheet.status,
+        "branch": sheet.branch,
+        "base": sheet.base,
+        "denied": denied,
+        "outside": outside,
+        "uncommitted": uncommitted,
+        "test": checks.last_test_result(repo_root, sheet.id),
+        "diffstat": gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root),
+        "conflicts": conflicts,
+        "mergeable": mergeable,
+        "drift": drift,
+        "acceptance": _acceptance_text(sheet.body),
+    }
 
-    test_display = {"ok": "✓ 通过", "fail": "✗ 失败"}.get(test, "— 无记录")
 
-    lines: list[str] = []
-    lines.append(f"# 审查：{sheet.id} {sheet.title}")
-    lines.append("")
-    lines.append(f"- ID: {sheet.id}")
-    lines.append(f"- Agent: {sheet.agent}")
-    lines.append(f"- 状态: {sheet.status}")
-    lines.append(f"- 分支: {sheet.branch}")
-    lines.append(f"- 基线: {sheet.base}")
-    lines.append("")
-    lines.append("## 检查结果")
-    lines.append("")
-    lines.append(f"- 越界 (denied): {len(denied)}")
-    lines.append(f"- 越界 (outside): {len(outside)}")
-    lines.append(f"- 未提交改动: {len(uncommitted)}")
-    lines.append("")
-    lines.append("## 最近一次测试")
-    lines.append("")
-    lines.append(f"- {test_display}")
-    lines.append("")
-    lines.append("## diffstat")
-    lines.append("")
-    lines.append("```text")
-    lines.append(diffstat or "(no changes)")
-    lines.append("```")
-    lines.append("")
-    lines.append("## 冲突情况")
-    lines.append("")
-    if conflicts:
-        for entry in conflicts:
-            other = entry["b"] if entry["a"] == sheet.id else entry["a"]
-            lines.append(f"- 真实冲突 <-> {other}: {', '.join(entry['files'])}")
-    if mergeable:
-        for entry in mergeable:
-            other = entry["b"] if entry["a"] == sheet.id else entry["a"]
-            lines.append(f"- 同文件但可自动合并 <-> {other}: {', '.join(entry['files'])}")
-    if drift:
-        for entry in drift:
-            lines.append(f"- 基线漂移: {', '.join(entry['files'])}")
-    if not (conflicts or mergeable or drift):
-        lines.append("- 无")
-    lines.append("")
-    lines.append("## 验收清单")
-    lines.append("")
-    lines.append(acceptance_text if acceptance_text else "（无验收小节）")
-    lines.append("")
-    lines.append("## 审查意见")
-    lines.append("")
-    lines.append("（待填写）")
-    return "\n".join(lines)
+def _build_review_markdown(
+    sheet: Sheet, cfg: config.Config, repo_root: Path, lang: str = "zh"
+) -> str:
+    return render.render_review(_review_info(sheet, cfg, repo_root), lang=lang)
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -721,7 +692,7 @@ def cmd_review(args: argparse.Namespace) -> int:
     if changed:
         sheet.status = "review"
 
-    markdown = _build_review_markdown(sheet, cfg, repo_root)
+    markdown = _build_review_markdown(sheet, cfg, repo_root, lang=args.lang)
 
     if changed:
         path = _tasks_dir(repo_root) / f"{sheet.id}.md"
@@ -761,6 +732,134 @@ def cmd_rework(args: argparse.Namespace) -> int:
     path = _tasks_dir(repo_root) / f"{sheet.id}.md"
     path.write_text(dump(sheet), encoding="utf-8")
     print(f"rework {sheet.id}: note appended")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# done
+# --------------------------------------------------------------------------- #
+
+def _write_status(repo_root: Path, sheet: Sheet, status: str) -> None:
+    sheet.status = status
+    path = _tasks_dir(repo_root) / f"{sheet.id}.md"
+    path.write_text(dump(sheet), encoding="utf-8")
+
+
+def _done_blockers(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[str]:
+    """Return the reasons ``done`` must refuse, mirroring ``check`` plus tests."""
+    try:
+        committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+    except gitops.GitError as exc:
+        return [f"cannot read branch changes ({exc})"]
+    worktree = checks.resolve_worktree(cfg, sheet)
+    uncommitted = gitops.uncommitted_files(worktree) if worktree.exists() else []
+    all_paths = list(dict.fromkeys(committed + uncommitted))
+    denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
+    blockers: list[str] = []
+    if denied or outside:
+        blockers.append("scope violations: " + ", ".join(denied + outside))
+    if uncommitted:
+        blockers.append("uncommitted changes: " + ", ".join(uncommitted))
+    if checks.last_test_result(repo_root, sheet.id) != "ok":
+        blockers.append("last test run did not pass (or no record)")
+    return blockers
+
+
+def cmd_done(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+
+    if args.clean and not args.merge:
+        raise AtbError("--clean can only be used together with --merge")
+
+    if sheet.status == "review":
+        pass
+    elif sheet.status == "doing" and args.force:
+        print(
+            f"warning: task {args.id} is still 'doing'; continuing because of --force",
+            file=sys.stderr,
+        )
+    else:
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; "
+            "only 'review' can be done (--force allows 'doing')"
+        )
+
+    if not sheet.base or not sheet.branch:
+        raise AtbError(f"task {args.id} not started (no base/branch)")
+
+    blockers = _done_blockers(sheet, cfg, repo_root)
+    if blockers:
+        raise CheckError("cannot mark done: " + "; ".join(blockers))
+
+    if not args.merge:
+        _write_status(repo_root, sheet, "done")
+        print(f"marked {sheet.id} done; merge branch {sheet.branch!r} yourself (never pushed)")
+        print(f"task sheet updated; commit it yourself (not auto-committed)")
+        return 0
+
+    # --merge preconditions
+    if not gitops.is_main_worktree(repo_root):
+        raise AtbError("--merge must be run from the main worktree")
+    current = gitops.current_branch(cwd=repo_root)
+    if current != cfg.target:
+        raise AtbError(
+            f"--merge requires the current branch to be {cfg.target!r} "
+            f"(currently on {current!r})"
+        )
+
+    target_head = gitops.rev_parse(cfg.target, cwd=repo_root)
+    merge_files = gitops.changed_files(target_head, sheet.branch, cwd=repo_root)
+    dirty = gitops.uncommitted_files(repo_root)
+    overlap = sorted(set(merge_files) & set(dirty))
+    if overlap:
+        raise AtbError(
+            "merge would overwrite uncommitted files: " + ", ".join(overlap)
+        )
+
+    message = cfg.merge_message.format(
+        branch=sheet.branch, id=sheet.id, title=sheet.title
+    )
+    proc = gitops.merge_no_ff(sheet.branch, message, cwd=repo_root)
+    if proc.returncode != 0:
+        gitops.merge_abort(cwd=repo_root)
+        raise CheckError(
+            f"merge of {sheet.branch!r} into {cfg.target!r} failed (conflict?); aborted"
+        )
+
+    if args.clean:
+        worktree = checks.resolve_worktree(cfg, sheet)
+        gitops.worktree_remove(worktree, cwd=repo_root)  # refuses when dirty
+        gitops.branch_delete(sheet.branch, cwd=repo_root)  # -d only
+
+    _write_status(repo_root, sheet, "done")
+    print(f"merged {sheet.branch!r} into {cfg.target} with --no-ff")
+    print(f"marked {sheet.id} done; task sheet updated — commit it yourself (never pushed)")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# board
+# --------------------------------------------------------------------------- #
+
+def cmd_board(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheets = _load_tasks(repo_root)
+    rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
+
+    summary = {status: 0 for status in STATUSES}
+    for row in rows:
+        if row["status"] in summary:
+            summary[row["status"]] += 1
+
+    active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
+    conflicts = checks.compute_conflicts(active, cfg, repo_root)
+
+    html_text = render.render_board_html(rows, summary, conflicts)
+    Path(args.html).write_text(html_text, encoding="utf-8")
+    print(f"board written to {args.html}")
     return 0
 
 
@@ -829,12 +928,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_review = sub.add_parser("review", help="generate a review sheet for a task")
     p_review.add_argument("id", help="task id, e.g. T001")
     p_review.add_argument("--out", help="write the review to FILE instead of stdout")
+    p_review.add_argument("--lang", choices=["zh", "en"], default="zh", help="review language")
     p_review.set_defaults(func=cmd_review)
 
     p_rework = sub.add_parser("rework", help="send a task back for rework")
     p_rework.add_argument("id", help="task id, e.g. T001")
     p_rework.add_argument("--note", required=True, help="rework note, or @file to read from a file")
     p_rework.set_defaults(func=cmd_rework)
+
+    p_done = sub.add_parser("done", help="verify and finish a task")
+    p_done.add_argument("id", help="task id, e.g. T001")
+    p_done.add_argument("--merge", action="store_true", help="merge the branch into target with --no-ff")
+    p_done.add_argument("--clean", action="store_true", help="remove worktree and branch after merging (needs --merge)")
+    p_done.add_argument("--force", action="store_true", help="allow finishing a 'doing' task (never skips scope checks)")
+    p_done.set_defaults(func=cmd_done)
+
+    p_board = sub.add_parser("board", help="write a standalone static HTML board")
+    p_board.add_argument("--html", required=True, metavar="FILE", help="output HTML file")
+    p_board.set_defaults(func=cmd_board)
 
     return parser
 

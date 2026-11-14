@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
     "test": "python3 -m unittest discover -s tests",
     "id_prefix": "T",
     "test_timeout": 1800,
+    "merge_message": "Merge {branch} ({id}: {title})",
 }
 
 #: The known keys and the type each one must have.
@@ -35,6 +36,7 @@ TYPES: dict[str, type] = {
     "test": str,
     "id_prefix": str,
     "test_timeout": int,
+    "merge_message": str,
 }
 
 #: Text written by ``atb init`` when no config exists yet.
@@ -45,6 +47,7 @@ branch_pattern = "{agent}/{slug}"
 test = "python3 -m unittest discover -s tests"
 id_prefix = "T"
 test_timeout = 1800
+merge_message = "Merge {branch} ({id}: {title})"
 """
 
 
@@ -86,6 +89,7 @@ class Config:
     test: str = DEFAULTS["test"]
     id_prefix: str = DEFAULTS["id_prefix"]
     test_timeout: int = DEFAULTS["test_timeout"]
+    merge_message: str = DEFAULTS["merge_message"]
     extra: dict[str, Any] = field(default_factory=dict)
     repo_root: Path = field(default_factory=Path)
     config_path: Path = field(default_factory=Path)
@@ -125,6 +129,7 @@ def load_config(repo_root: str | os.PathLike) -> Config:
         test=merged["test"],
         id_prefix=merged["id_prefix"],
         test_timeout=merged["test_timeout"],
+        merge_message=merged["merge_message"],
         extra=extra,
         repo_root=repo_root,
         config_path=config_path,
