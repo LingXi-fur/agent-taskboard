@@ -1,13 +1,109 @@
 # agent-taskboard (`atb`)
 
-> Status: pre-alpha, under construction. See [DESIGN.md](DESIGN.md).
+> [中文文档](README.zh-CN.md) · Status: pre-alpha, under active development. See [DESIGN.md](DESIGN.md).
 
-Run several AI coding agents (Claude Code, Codex, OpenCode, Gemini CLI, …) in parallel without losing control:
-write a task sheet, hand it off in its own git worktree, check that the agent stayed in scope,
-catch cross-task conflicts before merging, and review against the sheet's acceptance list.
+Run several AI coding agents (Claude Code, Codex, OpenCode, Gemini CLI, ...) in parallel without losing control: write a task sheet, hand it off in its own git worktree, check scope and tests, catch cross-task conflicts before merging, and review against an acceptance checklist.
 
-Zero dependencies · local-only · never pushes.
+```console
+$ atb new "Update greeting message" --agent claude --allow "src/app.py" --deny "src/core.py"
+$ atb start T001 && atb prompt T001 --lang en | head -n 1
+started T001: branch=claude/update-greeting-message
+# Task handoff: T001 Update greeting message
+$ atb check T001
+denied:
+  - src/core.py
+$ atb status && atb review T001 | head -n 1
+T001  doing   claude    Update greeting message  claude/update-greeting-message  +1/-0         2      1     —
+# 审查：T001 Update greeting message
+```
 
----
+## Why `atb`?
 
-多个 AI 编程 Agent 并行干活时的任务看板：任务单 → 独立 worktree 交接 → 越界检查 → 跨任务冲突检测 → 按验收清单审查。零依赖、纯本地、从不 push。
+- **Agents edit files outside their scope** -> `atb check` validates committed and uncommitted diffs against `allow` / `deny` globs and exits non-zero on violations.
+- **Two parallel agents edit the same file** -> `atb conflicts` detects overlapping files across active tasks and runs `git merge-tree` (without touching any worktree) to separate real merge conflicts from clean auto-merges.
+- **You don't know if tests actually ran before merging** -> `atb check --test` runs the configured test command inside the task's worktree and logs the result; `atb review` compiles scope checks, test runs, diffstat, and acceptance checkboxes into one Markdown review sheet.
+- **Rework feedback gets lost in chat history** -> `atb rework` appends review notes to the task sheet's rework section, and `atb prompt` puts that rework section at the very top of the next handoff.
+
+## Installation
+
+Requires **Python 3.11+** and **Git 2.38+** (for `git merge-tree --write-tree`). Zero third-party Python dependencies.
+
+```bash
+pip install -e .
+```
+
+Or run directly from source without installing:
+
+```bash
+PYTHONPATH=src python3 -m agent_taskboard --help
+```
+
+To see a complete end-to-end demo in a temporary git repository (no changes made to this repo):
+
+```bash
+bash examples/walkthrough.sh
+```
+
+## Task Sheet Format
+
+Tasks live in `.taskboard/tasks/<ID>.md` as a TOML front-matter block (`+++ ... +++`) followed by a Markdown body:
+
+```markdown
++++
+id = "T003"
+title = "Add user profile endpoint"
+agent = "opencode"
+status = "todo"
+base = ""
+branch = ""
+allow = ["src/api/*.py", "tests/**"]
+deny = ["src/api/auth.py", "pyproject.toml"]
+depends = ["T001"]
+test = ""
+created = 2026-11-14T08:00:00Z
++++
+
+## Context
+...
+
+## Tasks
+...
+
+## Acceptance
+- [ ] Unit tests pass
+```
+
+**Scope glob rules (`allow` / `deny`):**
+- `*` matches within a single path segment (does not cross `/`).
+- `**` matches across multiple directory levels.
+- `deny` always takes precedence over `allow`.
+- An empty `allow` list means no restriction (though `deny` still applies).
+- File renames are checked against both the old and new paths.
+
+## Commands
+
+| Command | Description | Status |
+|---|---|---|
+| `atb init` | Initialize `.taskboard/` and default `config.toml`; check git version | Implemented |
+| `atb new "title" --agent X [--allow G] [--deny G] [--depends ID]` | Create a task sheet from template | Implemented |
+| `atb list [--status S]` / `atb show ID` | List task sheets / inspect a single task sheet | Implemented |
+| `atb start ID [--base REV] [--force]` | Validate dependencies, create a git worktree, record `base` & `branch` | Implemented |
+| `atb prompt ID [--lang zh\|en]` | Generate a full handoff prompt (rework notes first, then scope & body) | Implemented |
+| `atb check ID [--test] [--strict] [--json]` | Scope-check committed & uncommitted changes; optionally run tests in worktree | Implemented |
+| `atb status [--json]` | Show board table: status, branch, ahead/behind, files, violations, last test | Implemented |
+| `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
+| `atb review ID [--out FILE]` | Generate a Markdown review sheet combining checks, tests, diffstat, and checklist | Implemented |
+| `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
+| `atb done ID [--merge] [--clean]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree | Planned |
+| `atb board --html out.html` | Export a standalone static HTML task board | Planned |
+
+## Principles
+
+- **Local-only & zero dependencies**: Standard-library Python + `git` CLI. All state lives as plain text under `.taskboard/`.
+- **Never pushes**: `atb` never runs `git push`.
+- **Never auto-merges**: No implicit merges or destructive `reset --hard`.
+- **Agent-agnostic**: `atb` never calls model APIs or modifies your agent tools' files; it only produces handoff prompts and verifies git worktrees.
+
+## Compared to Opening Multiple Terminals
+
+Running several agent sessions in separate terminals works fine for ad-hoc tasks, but you still have to manually create worktrees, repeat scope rules in every prompt, spot out-of-scope edits by eye, discover merge conflicts only when merging, and dig through chat logs for review notes. `atb` turns those manual steps into plain-text task sheets and scriptable CLI checks without getting in the way of whichever coding agent you prefer.
