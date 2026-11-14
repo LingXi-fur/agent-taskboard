@@ -16,9 +16,20 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, gitops, prompts, scope
+from . import checks, config, gitops, prompts, scope
 from .errors import AtbError, CheckError
-from .sheet import Sheet, TEMPLATE_BODY, dump, next_id, parse, slugify, to_dict
+from .sheet import (
+    STATUSES,
+    Sheet,
+    TEMPLATE_BODY,
+    append_rework_note,
+    dump,
+    extract_section,
+    next_id,
+    parse,
+    slugify,
+    to_dict,
+)
 
 # --------------------------------------------------------------------------- #
 # Rendering helpers
@@ -457,6 +468,303 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# status
+# --------------------------------------------------------------------------- #
+
+MAX_TITLE_WIDTH = 24
+
+
+def _truncate_width(text: str, max_width: int) -> str:
+    """Truncate ``text`` to ``max_width`` display columns, appending an ellipsis."""
+    if _display_width(text) <= max_width:
+        return text
+    ellipsis = "…"
+    limit = max_width - _display_width(ellipsis)
+    result = ""
+    width = 0
+    for char in text:
+        w = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        if width + w > limit:
+            break
+        result += char
+        width += w
+    return result + ellipsis
+
+
+def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
+    row: dict = {
+        "id": sheet.id,
+        "status": sheet.status,
+        "agent": sheet.agent,
+        "title": sheet.title,
+        "branch": sheet.branch or "",
+        "missing": False,
+        "ahead": None,
+        "behind": None,
+        "changed_files": None,
+        "violations": None,
+        "test": checks.last_test_result(repo_root, sheet.id),
+    }
+    if sheet.status not in checks.ACTIVE_STATUSES:
+        return row
+    if not sheet.branch:
+        row["missing"] = True
+        return row
+    worktree = checks.resolve_worktree(cfg, sheet)
+    if not gitops.branch_exists(sheet.branch, cwd=repo_root) or not worktree.exists():
+        row["missing"] = True
+        return row
+    try:
+        ahead, behind = gitops.rev_list_count(cfg.target, sheet.branch, cwd=repo_root)
+        paths = checks.task_changed_paths(sheet, cfg, repo_root)
+        denied, outside = checks.classify_violations(paths, sheet.allow, sheet.deny)
+        row["ahead"] = ahead
+        row["behind"] = behind
+        row["changed_files"] = len(paths)
+        row["violations"] = len(denied) + len(outside)
+    except gitops.GitError:
+        row["missing"] = True
+    return row
+
+
+def _render_columns(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
+    columns = list(zip(headers, *rows)) if rows else list(zip(headers))
+    widths = [max(_display_width(cell) for cell in col) for col in columns]
+
+    def fmt(cells: tuple[str, ...]) -> str:
+        return "  ".join(_pad(cells[i], widths[i]) for i in range(len(cells)))
+
+    lines = [fmt(headers)]
+    lines.extend(fmt(tuple(row)) for row in rows)
+    return "\n".join(lines)
+
+
+def _status_cells(row: dict) -> tuple[str, ...]:
+    branch = "missing" if row["missing"] else (row["branch"] or "—")
+    if row["ahead"] is None:
+        ahead_behind = "—"
+    else:
+        ahead_behind = f"+{row['ahead']}/-{row['behind']}"
+    files = str(row["changed_files"]) if row["changed_files"] is not None else "—"
+    violations = str(row["violations"]) if row["violations"] is not None else "—"
+    test = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
+    return (
+        row["id"],
+        row["status"],
+        row["agent"],
+        _truncate_width(row["title"], MAX_TITLE_WIDTH),
+        branch,
+        ahead_behind,
+        files,
+        violations,
+        test,
+    )
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheets = _load_tasks(repo_root)
+    rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
+
+    summary = {status: 0 for status in STATUSES}
+    for row in rows:
+        if row["status"] in summary:
+            summary[row["status"]] += 1
+
+    if args.json:
+        print(json.dumps({"tasks": rows, "summary": summary}, ensure_ascii=False, indent=2))
+    else:
+        headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "VIOL", "TEST")
+        print(_render_columns(headers, [_status_cells(row) for row in rows]))
+        print("  ".join(f"{status}: {summary[status]}" for status in STATUSES))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# conflicts
+# --------------------------------------------------------------------------- #
+
+def _print_conflicts(result: dict) -> None:
+    sections = (
+        ("真实冲突:", result["conflicts"], lambda e: f"{e['a']} <-> {e['b']}: {', '.join(e['files'])}"),
+        ("同文件但能自动合并:", result["mergeable"], lambda e: f"{e['a']} <-> {e['b']}: {', '.join(e['files'])}"),
+        ("基线漂移:", result["drift"], lambda e: f"{e['task']}: {', '.join(e['files'])}"),
+        ("无法判断:", result["errors"], lambda e: f"{' <-> '.join(e['tasks'])}: {e['message']}"),
+    )
+    for title, entries, fmt in sections:
+        print(title)
+        if not entries:
+            print("  (none)")
+            continue
+        for entry in entries:
+            print("  " + fmt(entry))
+
+
+def cmd_conflicts(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheets = _load_tasks(repo_root)
+    active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
+    result = checks.compute_conflicts(active, cfg, repo_root)
+
+    if result["errors"]:
+        exit_code = 2
+    elif result["conflicts"]:
+        exit_code = 1
+    else:
+        exit_code = 0
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        _print_conflicts(result)
+    return exit_code
+
+
+# --------------------------------------------------------------------------- #
+# review
+# --------------------------------------------------------------------------- #
+
+def _conflicts_for(sheet_id: str, result: dict) -> tuple[list, list, list]:
+    conflicts = [e for e in result["conflicts"] if e["a"] == sheet_id or e["b"] == sheet_id]
+    mergeable = [e for e in result["mergeable"] if e["a"] == sheet_id or e["b"] == sheet_id]
+    drift = [e for e in result["drift"] if e["task"] == sheet_id]
+    return conflicts, mergeable, drift
+
+
+def _build_review_markdown(sheet: Sheet, cfg: config.Config, repo_root: Path) -> str:
+    committed = checks.task_committed(sheet, repo_root)
+    uncommitted = checks.task_uncommitted(sheet, cfg)
+    all_paths = list(dict.fromkeys(committed + uncommitted))
+    denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
+    test = checks.last_test_result(repo_root, sheet.id)
+    diffstat = gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root)
+    acceptance = extract_section(sheet.body, "## 验收")
+    acceptance_lines = acceptance.split("\n")
+    if acceptance_lines and (
+        acceptance_lines[0] == "## 验收" or acceptance_lines[0].startswith("## 验收 ")
+    ):
+        acceptance_lines = acceptance_lines[1:]
+    acceptance_text = "\n".join(acceptance_lines).strip()
+
+    other_active = [
+        s for s in _load_tasks(repo_root)
+        if s.status in checks.ACTIVE_STATUSES and s.id != sheet.id
+    ]
+    result = checks.compute_conflicts([sheet] + other_active, cfg, repo_root)
+    conflicts, mergeable, drift = _conflicts_for(sheet.id, result)
+
+    test_display = {"ok": "✓ 通过", "fail": "✗ 失败"}.get(test, "— 无记录")
+
+    lines: list[str] = []
+    lines.append(f"# 审查：{sheet.id} {sheet.title}")
+    lines.append("")
+    lines.append(f"- ID: {sheet.id}")
+    lines.append(f"- Agent: {sheet.agent}")
+    lines.append(f"- 状态: {sheet.status}")
+    lines.append(f"- 分支: {sheet.branch}")
+    lines.append(f"- 基线: {sheet.base}")
+    lines.append("")
+    lines.append("## 检查结果")
+    lines.append("")
+    lines.append(f"- 越界 (denied): {len(denied)}")
+    lines.append(f"- 越界 (outside): {len(outside)}")
+    lines.append(f"- 未提交改动: {len(uncommitted)}")
+    lines.append("")
+    lines.append("## 最近一次测试")
+    lines.append("")
+    lines.append(f"- {test_display}")
+    lines.append("")
+    lines.append("## diffstat")
+    lines.append("")
+    lines.append("```text")
+    lines.append(diffstat or "(no changes)")
+    lines.append("```")
+    lines.append("")
+    lines.append("## 冲突情况")
+    lines.append("")
+    if conflicts:
+        for entry in conflicts:
+            other = entry["b"] if entry["a"] == sheet.id else entry["a"]
+            lines.append(f"- 真实冲突 <-> {other}: {', '.join(entry['files'])}")
+    if mergeable:
+        for entry in mergeable:
+            other = entry["b"] if entry["a"] == sheet.id else entry["a"]
+            lines.append(f"- 同文件但可自动合并 <-> {other}: {', '.join(entry['files'])}")
+    if drift:
+        for entry in drift:
+            lines.append(f"- 基线漂移: {', '.join(entry['files'])}")
+    if not (conflicts or mergeable or drift):
+        lines.append("- 无")
+    lines.append("")
+    lines.append("## 验收清单")
+    lines.append("")
+    lines.append(acceptance_text if acceptance_text else "（无验收小节）")
+    lines.append("")
+    lines.append("## 审查意见")
+    lines.append("")
+    lines.append("（待填写）")
+    return "\n".join(lines)
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+    if not sheet.base or not sheet.branch:
+        raise AtbError(f"task {args.id} not started (no base/branch); run 'atb start' first")
+
+    # Build the review first so a failure leaves the status untouched; flip the
+    # in-memory status so the sheet header shows the post-review state.
+    changed = sheet.status == "doing"
+    if changed:
+        sheet.status = "review"
+
+    markdown = _build_review_markdown(sheet, cfg, repo_root)
+
+    if changed:
+        path = _tasks_dir(repo_root) / f"{sheet.id}.md"
+        path.write_text(dump(sheet), encoding="utf-8")
+
+    if args.out:
+        Path(args.out).write_text(markdown + "\n", encoding="utf-8")
+        print(f"review written to {args.out}")
+    else:
+        print(markdown)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# rework
+# --------------------------------------------------------------------------- #
+
+def cmd_rework(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    sheet = _load_task(repo_root, args.id)
+    if sheet.status not in ("doing", "review", "rework"):
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; "
+            "only doing/review/rework can be sent to rework"
+        )
+
+    note = args.note
+    if note.startswith("@"):
+        note_path = Path(note[1:])
+        if not note_path.exists():
+            raise AtbError(f"note file {note_path} not found")
+        note = note_path.read_text(encoding="utf-8").rstrip("\n")
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    sheet.status = "rework"
+    sheet.body = append_rework_note(sheet.body, note, timestamp)
+    path = _tasks_dir(repo_root) / f"{sheet.id}.md"
+    path.write_text(dump(sheet), encoding="utf-8")
+    print(f"rework {sheet.id}: note appended")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -509,6 +817,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--strict", action="store_true", help="fail on uncommitted changes too")
     p_check.add_argument("--json", action="store_true")
     p_check.set_defaults(func=cmd_check)
+
+    p_status = sub.add_parser("status", help="show the task board")
+    p_status.add_argument("--json", action="store_true")
+    p_status.set_defaults(func=cmd_status)
+
+    p_conflicts = sub.add_parser("conflicts", help="detect cross-task conflicts and drift")
+    p_conflicts.add_argument("--json", action="store_true")
+    p_conflicts.set_defaults(func=cmd_conflicts)
+
+    p_review = sub.add_parser("review", help="generate a review sheet for a task")
+    p_review.add_argument("id", help="task id, e.g. T001")
+    p_review.add_argument("--out", help="write the review to FILE instead of stdout")
+    p_review.set_defaults(func=cmd_review)
+
+    p_rework = sub.add_parser("rework", help="send a task back for rework")
+    p_rework.add_argument("id", help="task id, e.g. T001")
+    p_rework.add_argument("--note", required=True, help="rework note, or @file to read from a file")
+    p_rework.set_defaults(func=cmd_rework)
 
     return parser
 

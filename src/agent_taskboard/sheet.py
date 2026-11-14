@@ -333,3 +333,73 @@ def slugify(title: str, fallback: str = "") -> str:
     if not slug:
         return fallback.lower()
     return slug[:40].rstrip("-")
+
+
+# --------------------------------------------------------------------------- #
+# Markdown body helpers
+# --------------------------------------------------------------------------- #
+
+def extract_section(body: str, heading: str) -> str:
+    """Return the Markdown section starting at ``heading`` (e.g. ``## 验收``).
+
+    The section runs from the heading line up to (but not including) the next
+    ``## `` heading.  Returns ``""`` when the heading is absent.
+    """
+    lines = body.split("\n")
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if line == heading or line.startswith(heading + " "):
+            start = index
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].startswith("## "):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def _find_heading(lines: list[str], heading: str) -> int | None:
+    for index, line in enumerate(lines):
+        if line == heading or line.startswith(heading + " "):
+            return index
+    return None
+
+
+def _note_lines(timestamp: str, note: str) -> list[str]:
+    """Render a rework note as a Markdown list item (multi-line friendly)."""
+    text_lines = note.split("\n")
+    out = [f"- [{timestamp}] {text_lines[0]}"]
+    for line in text_lines[1:]:
+        out.append(f"  {line}" if line.strip() else "")
+    return out
+
+
+def append_rework_note(body: str, note: str, timestamp: str) -> str:
+    """Append a timestamped note to the ``## 返工`` section, creating it if needed.
+
+    The section is kept at the end of the body so the prompt (which hoists it to
+    the top) keeps working; repeated calls accumulate notes in order.
+    """
+    heading = "## 返工"
+    lines = body.split("\n")
+    heading_index = _find_heading(lines, heading)
+
+    if heading_index is None:
+        block = [heading, ""] + _note_lines(timestamp, note)
+        return body.rstrip("\n") + "\n\n" + "\n".join(block) + "\n"
+
+    end = len(lines)
+    for index in range(heading_index + 1, len(lines)):
+        if lines[index].startswith("## "):
+            end = index
+            break
+    last_content = heading_index
+    for index in range(heading_index + 1, end):
+        if lines[index].strip():
+            last_content = index
+    for offset, line in enumerate(_note_lines(timestamp, note)):
+        lines.insert(last_content + 1 + offset, line)
+    return "\n".join(lines)

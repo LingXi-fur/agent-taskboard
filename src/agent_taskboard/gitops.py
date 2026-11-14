@@ -7,11 +7,15 @@ the codebase never shells out to git directly.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
 from .errors import GitError
+
+#: A full git object id: 40 hex (SHA-1) or 64 hex (SHA-256).
+_HEX_OID_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def _run(
@@ -108,6 +112,39 @@ def merge_base(a: str, b: str, cwd: str | Path | None = None) -> str:
     """Return the merge base of revs ``a`` and ``b``."""
     proc = _run(["merge-base", a, b], cwd=cwd)
     return proc.stdout.strip()
+
+
+def merge_tree_conflicts(
+    a: str, b: str, cwd: str | Path | None = None
+) -> list[str]:
+    """Return the paths that actually conflict when merging ``a`` into ``b``.
+
+    Uses ``git merge-tree --write-tree --name-only --no-messages a b`` which
+    performs a real merge *without touching any worktree*.  ``--no-messages``
+    keeps the informational "Auto-merging"/"CONFLICT" lines out of stdout, so
+    only the tree OID and the conflicted paths remain.  A clean merge returns
+    ``[]``; a conflict returns the conflicted paths.  If the command fails
+    without producing a tree OID (e.g. an invalid ref), it raises
+    :class:`GitError` carrying git's stderr.
+    """
+    proc = _run(
+        ["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b],
+        cwd=cwd,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return []
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    if not lines or not _HEX_OID_RE.fullmatch(lines[0]):
+        detail = proc.stderr.strip() or "merge-tree failed"
+        raise GitError(f"git merge-tree {a} {b} failed: {detail}")
+    return lines[1:]
+
+
+def diff_stat(base: str, head: str, cwd: str | Path | None = None) -> str:
+    """Return the ``git diff --stat base...head`` output."""
+    proc = _run(["diff", "--stat", f"{base}...{head}"], cwd=cwd)
+    return proc.stdout.rstrip("\n")
 
 
 def _dedup(paths: Iterable[str]) -> list[str]:
