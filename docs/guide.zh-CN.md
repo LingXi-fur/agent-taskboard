@@ -92,6 +92,7 @@ stateDiagram-v2
     todo --> doing: atb start
     rework --> doing: atb start
     doing --> review: atb review
+    rework --> review: atb review
     doing --> rework: atb rework
     review --> rework: atb rework
     rework --> rework: atb rework
