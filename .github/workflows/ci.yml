@@ -32,8 +32,58 @@ jobs:
           git config --global user.name "CI Runner"
           git config --global user.email "ci@example.com"
 
-      - name: Run unit tests
+      - name: Run unit tests (TZ=UTC)
+        env:
+          TZ: UTC
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+
+      - name: Run unit tests (TZ=Asia/Shanghai)
+        env:
+          TZ: Asia/Shanghai
         run: PYTHONPATH=src python -m unittest discover -s tests -v
 
       - name: Run walkthrough example
         run: bash examples/walkthrough.sh
+
+      - name: Check documentation links
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          missing = []
+          link_re = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+          for path in sorted(Path("docs").glob("*.md")):
+              text = path.read_text(encoding="utf-8")
+              for raw in link_re.findall(text):
+                  target = raw.strip()
+                  if target.startswith(("http://", "https://", "mailto:", "#")):
+                      continue
+                  target = target.split("#", 1)[0]
+                  if not target:
+                      continue
+                  resolved = (path.parent / target).resolve()
+                  if not resolved.is_file():
+                      missing.append(f"{path}: {raw}")
+          if missing:
+              print("missing documentation links:")
+              print("\n".join(missing))
+              raise SystemExit(1)
+          print("documentation links ok")
+          PY
+
+      - name: Build and install wheel
+        run: |
+          python -m pip install "setuptools>=70.1" build
+          python -m build
+          python -m venv .pkg-venv
+          .pkg-venv/bin/python -m pip install dist/*.whl
+          EXPECTED=$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])
+          PY
+          )
+          ACTUAL=$(.pkg-venv/bin/atb --version)
+          echo "expected: atb $EXPECTED"
+          echo "actual:   $ACTUAL"
+          test "$ACTUAL" = "atb $EXPECTED"
