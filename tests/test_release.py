@@ -50,7 +50,7 @@ class VersionTests(unittest.TestCase):
         from agent_taskboard import __version__
 
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        self.assertEqual(__version__, "0.1.0")
+        self.assertRegex(__version__, r"^\d+\.\d+\.\d+$")
         self.assertEqual(data["project"]["version"], __version__)
 
     def test_get_version_matches_dunder(self):
@@ -67,7 +67,9 @@ class VersionTests(unittest.TestCase):
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("0.1.0", result.stdout)
+        from agent_taskboard import __version__
+
+        self.assertEqual(result.stdout.strip(), f"atb {__version__}")
 
 
 class PackagingTests(unittest.TestCase):
