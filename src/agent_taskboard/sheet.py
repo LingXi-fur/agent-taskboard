@@ -42,6 +42,7 @@ HEADER_FIELDS = (
     "id",
     "title",
     "agent",
+    "window",
     "status",
     "base",
     "branch",
@@ -79,6 +80,7 @@ class Sheet:
     title: str
     status: str
     agent: str = ""
+    window: str = ""
     base: str = ""
     branch: str = ""
     allow: list[str] = field(default_factory=list)
@@ -136,7 +138,7 @@ def parse(text: str) -> Sheet:
     if missing:
         raise SheetError("missing required field(s): " + ", ".join(missing))
 
-    for key in ("id", "title", "status", "agent", "base", "branch", "test"):
+    for key in ("id", "title", "status", "agent", "window", "base", "branch", "test"):
         if key in data and not isinstance(data[key], str):
             raise SheetError(
                 f"field {key!r} must be a string, got {type(data[key]).__name__}"
@@ -177,6 +179,7 @@ def parse(text: str) -> Sheet:
         title=data["title"],
         status=status,
         agent=data.get("agent", ""),
+        window=data.get("window", ""),
         base=data.get("base", ""),
         branch=data.get("branch", ""),
         allow=list_field("allow"),
@@ -274,6 +277,8 @@ def dump(sheet: Sheet) -> str:
         value = getattr(sheet, key)
         if value is None:
             continue
+        if key == "window" and value == "":
+            continue  # optional field: omit when unset
         parts.append(f"{key} = {_format_value(value)}")
     for key, value in sheet.extra.items():
         parts.append(f"{_format_key(key)} = {_format_value(value)}")
@@ -288,6 +293,8 @@ def to_dict(sheet: Sheet) -> dict[str, Any]:
         value = getattr(sheet, key)
         if value is None:
             continue
+        if key == "window" and value == "":
+            continue  # optional field: omit when unset
         if isinstance(value, datetime):
             value = _format_datetime(value)
         elif isinstance(value, list):

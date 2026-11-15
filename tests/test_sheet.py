@@ -238,5 +238,21 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(body.count("- [ ]"), 2)
 
 
+class WindowFieldTests(unittest.TestCase):
+    def test_window_defaults_empty_and_roundtrips(self):
+        parsed = sheet.parse(
+            '+++\nid="T1"\ntitle="x"\nstatus="todo"\n'
+            'window="OpenCode · taskboard 窗口"\n+++\n'
+        )
+        self.assertEqual(parsed.window, "OpenCode · taskboard 窗口")
+        self.assertEqual(sheet.parse(sheet.dump(parsed)), parsed)
+
+    def test_old_sheet_without_window_still_parses(self):
+        parsed = sheet.parse('+++\nid="T1"\ntitle="x"\nstatus="todo"\n+++\n')
+        self.assertEqual(parsed.window, "")
+        # an unset optional window must not be added on dump
+        self.assertNotIn("window =", sheet.dump(parsed))
+
+
 if __name__ == "__main__":
     unittest.main()

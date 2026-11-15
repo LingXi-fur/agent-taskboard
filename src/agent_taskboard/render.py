@@ -301,3 +301,49 @@ def render_board_html(
         "</body>\n"
         "</html>\n"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Dispatch checklist (Markdown)
+# --------------------------------------------------------------------------- #
+
+def _md_cell(value: object) -> str:
+    """Make a value safe inside a single Markdown table cell."""
+    return str(value).replace("\n", " ").replace("|", "\\|")
+
+
+def render_dispatch(project: str, groups: list[dict], lang: str = "zh") -> str:
+    """Render the per-project dispatch checklist as Markdown.
+
+    ``groups`` is a list of ``{"name": str, "tasks": [task, ...]}`` where each
+    task has ``id``, ``title``, ``agent``, ``status`` and ``message``.
+    """
+    if lang == "en":
+        lines = [f"## Project: {project}", ""]
+        headers = ("ID", "Title", "Agent", "Status", "Message")
+        empty = "(no active tasks)"
+    else:
+        lines = [f"## 项目：{project}", ""]
+        headers = ("ID", "标题", "Agent", "状态", "发这句话")
+        empty = "（没有活跃任务）"
+
+    if not groups:
+        lines.append(empty)
+        return "\n".join(lines)
+
+    for group in groups:
+        lines.append(f"### {group['name']}")
+        lines.append("")
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+        for task in group["tasks"]:
+            cells = (
+                task["id"],
+                task["title"],
+                task["agent"],
+                task["status"],
+                task["message"],
+            )
+            lines.append("| " + " | ".join(_md_cell(c) for c in cells) + " |")
+        lines.append("")
+    return "\n".join(lines).rstrip("\n")

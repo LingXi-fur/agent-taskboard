@@ -112,13 +112,14 @@ created = 2026-11-14T08:00:00Z
 | `atb list [--status S]` / `atb show ID` | 列出任务单 / 查看单个任务单 | 已实现 |
 | `atb start ID [--base REV] [--force]` | 校验依赖、创建独立 worktree，并将 `base` 和 `branch` 写回任务单 | 已实现 |
 | `atb prompt ID [--lang zh\|en]` | 生成完整交接文本（有返工时返工置顶，后接范围与任务正文） | 已实现 |
-| `atb check ID [--test] [--strict] [--json]` | 校验已提交与未提交改动的范围，可选在 worktree 中运行测试 | 已实现 |
+| `atb check ID [--test] [--strict] [--isolate-home] [--json]` | 校验已提交与未提交改动的范围，可选在隔离的临时 `HOME` 中运行测试 | 已实现 |
 | `atb status [--json]` | 展示任务看板：状态、分支、领先/落后提交、改动文件数、越界数、最近测试 | 已实现 |
 | `atb conflicts [--json]` | 两两对比活跃任务的文件重叠、`merge-tree` 真实冲突与基线漂移 | 已实现 |
 | `atb review ID [--out FILE] [--lang zh\|en]` | 生成汇总检查、测试、diffstat 与验收清单的 Markdown 审查表（中/英） | 已实现 |
 | `atb rework ID --note "..."` | 将状态改为 `rework` 并追加意见，使下次 `atb prompt` 优先展示 | 已实现 |
 | `atb done ID [--merge] [--clean] [--force]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree 与分支 | 已实现 |
 | `atb board --html out.html` | 导出单文件静态 HTML 看板 | 已实现 |
+| `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
 
 ## 设计原则
 

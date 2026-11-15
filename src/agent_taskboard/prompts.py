@@ -40,6 +40,20 @@ def _bullet(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def _rework_hint(sheet: Sheet, lang: str) -> str:
+    """Fixed follow-up hint appended to the rework block while status is rework."""
+    if sheet.status != "rework":
+        return ""
+    if lang == "en":
+        return (
+            f"After fixing, append commits on the original branch, then run "
+            f"`atb check {sheet.id} --test` and report the results."
+        )
+    return (
+        f"在原分支追加提交，完成后运行 `atb check {sheet.id} --test` 并回报结果。"
+    )
+
+
 def render_prompt(
     sheet: Sheet,
     worktree: str,
@@ -62,6 +76,10 @@ def _render_zh(
     if rework.strip():
         parts.append("## ⚠️⚠️ 返工内容（请优先处理）⚠️⚠️\n")
         parts.append(rework.strip())
+        hint = _rework_hint(sheet, "zh")
+        if hint:
+            parts.append("")
+            parts.append(hint)
         parts.append("")
 
     parts.append(f"# 任务交接：{sheet.id} {sheet.title}")
@@ -111,6 +129,10 @@ def _render_en(
     if rework.strip():
         parts.append("## ⚠️⚠️ REWORK (handle first) ⚠️⚠️\n")
         parts.append(rework.strip())
+        hint = _rework_hint(sheet, "en")
+        if hint:
+            parts.append("")
+            parts.append(hint)
         parts.append("")
 
     parts.append(f"# Task handoff: {sheet.id} {sheet.title}")
