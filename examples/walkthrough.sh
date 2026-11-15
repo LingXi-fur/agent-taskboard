@@ -125,3 +125,7 @@ atb rework T001 --note "Revert changes to src/core.py and resolve conflict in sr
 echo
 echo "=== 10. atb prompt T001 (rework first) ==="
 atb prompt T001 --lang en
+
+echo
+echo "=== 11. atb dispatch (forwarding checklist) ==="
+atb dispatch

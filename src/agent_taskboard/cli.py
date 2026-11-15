@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -376,7 +379,9 @@ def _last_4kb(text: str) -> str:
     return data[-4096:].decode("utf-8", errors="replace")
 
 
-def _run_test(command: str, worktree: Path, timeout: int) -> dict:
+def _run_test(
+    command: str, worktree: Path, timeout: int, env: dict | None = None
+) -> dict:
     argv = shlex.split(command)
     start = time.monotonic()
     if not argv:
@@ -385,6 +390,7 @@ def _run_test(command: str, worktree: Path, timeout: int) -> dict:
         proc = subprocess.Popen(
             argv,
             cwd=str(worktree),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -410,6 +416,36 @@ def _run_test(command: str, worktree: Path, timeout: int) -> dict:
     }
 
 
+def _iter_home_files(root: Path) -> set[str]:
+    if not root.exists():
+        return set()
+    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
+
+
+def _run_test_isolated(
+    command: str, worktree: Path, timeout: int
+) -> tuple[dict, list[str]]:
+    """Run tests with a throwaway HOME and return files they created under it."""
+    home = Path(tempfile.mkdtemp(prefix="atb-home-"))
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CACHE_HOME"] = str(home / ".cache")
+    env["XDG_DATA_HOME"] = str(home / ".local" / "share")
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    # The throwaway HOME has no ~/.gitconfig, so give tests a usable identity.
+    env.setdefault("GIT_AUTHOR_NAME", "atb")
+    env.setdefault("GIT_AUTHOR_EMAIL", "atb@example.invalid")
+    env.setdefault("GIT_COMMITTER_NAME", "atb")
+    env.setdefault("GIT_COMMITTER_EMAIL", "atb@example.invalid")
+    before = _iter_home_files(home)
+    try:
+        result = _run_test(command, worktree, timeout, env=env)
+    finally:
+        after = _iter_home_files(home)
+        shutil.rmtree(home, ignore_errors=True)
+    return result, sorted(after - before)
+
+
 def _append_run(repo_root: Path, task_id: str, command: str, result: dict) -> None:
     runs_dir = repo_root / ".taskboard" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -420,6 +456,11 @@ def _append_run(repo_root: Path, task_id: str, command: str, result: dict) -> No
         "command": command,
         "output": _last_4kb(result["output"]),
     }
+    if "home_writes" in result:
+        record["home_writes"] = result["home_writes"]
+        record["home_files"] = result.get("home_files", [])
+        if result.get("home_files_more"):
+            record["home_files_more"] = result["home_files_more"]
     path = runs_dir / f"{task_id}.jsonl"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -456,9 +497,20 @@ def cmd_check(args: argparse.Namespace) -> int:
         if not worktree.exists():
             raise AtbError(f"worktree {worktree} does not exist")
         command = sheet.test or cfg.test
-        test_result = _run_test(command, worktree, cfg.test_timeout)
+        isolate = cfg.isolate_home if args.isolate_home is None else args.isolate_home
+        if isolate:
+            test_result, home_files = _run_test_isolated(
+                command, worktree, cfg.test_timeout
+            )
+            test_result["home_writes"] = bool(home_files)
+            test_result["home_files"] = home_files[:20]
+            test_result["home_files_more"] = max(0, len(home_files) - 20)
+        else:
+            test_result = _run_test(command, worktree, cfg.test_timeout)
         _append_run(repo_root, sheet.id, command, test_result)
         if test_result["exit_code"] != 0:
+            exit_code = 1
+        if test_result.get("home_writes"):
             exit_code = 1
 
     if uncommitted and args.strict:
@@ -477,6 +529,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         }
         if test_result is not None:
             payload["test"] = test_result
+            if "home_writes" in test_result:
+                payload["home_writes"] = test_result["home_writes"]
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(f"ahead: {ahead}")
@@ -502,6 +556,13 @@ def cmd_check(args: argparse.Namespace) -> int:
             print("  (none)")
         if test_result is not None:
             print(f"test: exit {test_result['exit_code']} in {test_result['duration']}s")
+            if test_result.get("home_writes"):
+                print("home: 测试写入了 HOME")
+                for name in test_result.get("home_files", []):
+                    print(f"  - {name}")
+                more = test_result.get("home_files_more", 0)
+                if more:
+                    print(f"  (另有 {more} 个)")
 
     if uncommitted and not args.strict:
         print("warning: uncommitted changes present (use --strict to fail)", file=sys.stderr)
@@ -730,12 +791,17 @@ def cmd_review(args: argparse.Namespace) -> int:
     _require_commits(repo_root)
     cfg = config.load_config(repo_root)
     sheet = _load_task(repo_root, args.id)
+    if sheet.status not in ("doing", "review", "rework"):
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; "
+            "only 'doing', 'review' or 'rework' can be reviewed"
+        )
     if not sheet.base or not sheet.branch:
         raise AtbError(f"task {args.id} not started (no base/branch); run 'atb start' first")
 
     # Build the review first so a failure leaves the status untouched; flip the
     # in-memory status so the sheet header shows the post-review state.
-    changed = sheet.status == "doing"
+    changed = sheet.status in ("doing", "rework")
     if changed:
         sheet.status = "review"
 
@@ -831,9 +897,12 @@ def cmd_done(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     else:
+        hint = ""
+        if sheet.status in ("doing", "rework"):
+            hint = f"; run 'atb review {args.id}' first"
         raise AtbError(
             f"task {args.id} has status {sheet.status!r}; "
-            "only 'review' can be done (--force allows 'doing')"
+            f"only 'review' can be done (--force allows 'doing'){hint}"
         )
 
     if not sheet.base or not sheet.branch:
@@ -915,6 +984,70 @@ def cmd_board(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# dispatch
+# --------------------------------------------------------------------------- #
+
+DISPATCH_STATUSES = ("todo", "doing", "rework")
+
+
+def _dispatch_message(repo_root: Path, sheet: Sheet, lang: str) -> str:
+    repo = str(repo_root)
+    if lang == "en":
+        if sheet.status == "rework":
+            return (
+                f"{sheet.id} was sent back. In {repo}, run "
+                f"`PYTHONPATH=src python3 -m agent_taskboard prompt {sheet.id}`; "
+                f'the "Rework" section at the top is what to change. '
+                f"Reply in English; do not push or merge when done."
+            )
+        return (
+            f"In {repo}, run `PYTHONPATH=src python3 -m agent_taskboard prompt "
+            f"{sheet.id}` and follow the handoff. Reply in English; do not push "
+            f"or merge when done."
+        )
+    if sheet.status == "rework":
+        return (
+            f'{sheet.id} 被打回了，请在 {repo} 运行 '
+            f'PYTHONPATH=src python3 -m agent_taskboard prompt {sheet.id}，'
+            f'最前面的"返工"小节就是要改的内容。全程中文，完成后不要 push、不要合并。'
+        )
+    return (
+        f"请在 {repo} 运行 PYTHONPATH=src python3 -m agent_taskboard prompt "
+        f"{sheet.id}，按交接文本执行。全程中文，完成后不要 push、不要合并。"
+    )
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    sheets = _load_tasks(repo_root)
+    active = [s for s in sheets if s.status in DISPATCH_STATUSES]
+
+    grouped: dict[str, list[dict]] = {}
+    for sheet in active:
+        group_name = sheet.window or sheet.agent or "(unknown)"
+        grouped.setdefault(group_name, []).append({
+            "id": sheet.id,
+            "title": sheet.title,
+            "agent": sheet.agent,
+            "status": sheet.status,
+            "window": sheet.window,
+            "message": _dispatch_message(repo_root, sheet, args.lang),
+        })
+
+    groups = [{"name": name, "tasks": grouped[name]} for name in sorted(grouped)]
+    project = repo_root.name
+
+    if args.json:
+        print(json.dumps(
+            {"project": project, "groups": groups}, ensure_ascii=False, indent=2
+        ))
+    else:
+        print(render.render_dispatch(project, groups, lang=args.lang))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -968,6 +1101,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("id", help="task id, e.g. T001")
     p_check.add_argument("--test", action="store_true", help="run the test command in the worktree")
     p_check.add_argument("--strict", action="store_true", help="fail on uncommitted changes too")
+    p_check.add_argument(
+        "--isolate-home",
+        action="store_true",
+        default=None,
+        help="run tests with a throwaway HOME and flag files they write there",
+    )
     p_check.add_argument("--json", action="store_true")
     p_check.set_defaults(func=cmd_check)
 
@@ -1000,6 +1139,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_board = sub.add_parser("board", help="write a standalone static HTML board")
     p_board.add_argument("--html", required=True, metavar="FILE", help="output HTML file")
     p_board.set_defaults(func=cmd_board)
+
+    p_dispatch = sub.add_parser("dispatch", help="print a per-window dispatch checklist")
+    p_dispatch.add_argument("--json", action="store_true")
+    p_dispatch.add_argument("--lang", choices=["zh", "en"], default="zh", help="checklist language")
+    p_dispatch.set_defaults(func=cmd_dispatch)
 
     return parser
 
