@@ -28,14 +28,28 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 需要 **Python 3.11+** 和 **Git 2.38+**（用于 `git merge-tree --write-tree`），零第三方 Python 依赖。
 
+从源码安装（需要联网一次，用于获取构建依赖 `setuptools>=70.1`）：
+
 ```bash
 pip install -e .
 ```
 
-也可以不安装，直接从源码运行：
+确认安装：
+
+```bash
+atb --version
+```
+
+如果离线，可以不安装，直接从 `src` 运行：
 
 ```bash
 PYTHONPATH=src python3 -m agent_taskboard --help
+```
+
+用 shell alias 会更顺手：
+
+```bash
+alias atb='PYTHONPATH=/path/to/agent-taskboard/src python3 -m agent_taskboard'
 ```
 
 想在临时目录中完整体验一次端到端流程（不会改动当前仓库）：
@@ -43,6 +57,15 @@ PYTHONPATH=src python3 -m agent_taskboard --help
 ```bash
 bash examples/walkthrough.sh
 ```
+
+想预览静态 HTML 看板，可在任意含任务单的仓库中生成后，用浏览器打开：
+
+```bash
+atb board --html board.html
+```
+
+然后双击 `board.html`，或在该目录运行 `python3 -m http.server` 后打开提示的地址。
+看板是单文件、自包含的（内联 CSS，暗色优先），不加载任何外部资源。
 
 ## 任务单格式
 

@@ -44,6 +44,12 @@ def rev_parse(rev: str, cwd: str | Path | None = None) -> str:
     return proc.stdout.strip()
 
 
+def has_commits(cwd: str | Path | None = None) -> bool:
+    """Return whether the repository has at least one commit (a valid HEAD)."""
+    proc = _run(["rev-parse", "--verify", "-q", "HEAD"], cwd=cwd, check=False)
+    return proc.returncode == 0
+
+
 def branch_exists(name: str, cwd: str | Path | None = None) -> bool:
     """Return whether local branch ``name`` exists."""
     proc = _run(
