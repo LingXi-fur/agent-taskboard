@@ -115,13 +115,14 @@ created = 2026-11-14T08:00:00Z
 | `atb start ID [--base REV] [--force]` | Validate dependencies, create a git worktree, record `base` & `branch` | Implemented |
 | `atb prompt ID [--lang zh\|en]` | Generate a full handoff prompt (rework notes first, then scope & body) | Implemented |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope-check committed & uncommitted changes; optionally run tests in a throwaway isolated `HOME` | Implemented |
-| `atb status [--json]` | Show board table: status, branch, ahead/behind, files, violations, last test | Implemented |
+| `atb status [--json]` | Show board: status, branch, ahead/behind, files, dirty (uncommitted), violations, idle time, last test | Implemented |
 | `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
 | `atb review ID [--out FILE] [--lang zh\|en]` | Generate a Markdown review sheet combining checks, tests, diffstat, and checklist (Chinese/English) | Implemented |
 | `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
 | `atb done ID [--merge] [--clean] [--force]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree and branch | Implemented |
 | `atb board --html out.html` | Export a standalone static HTML task board | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
+| `atb watch [--interval S] [--timeout S] [--json]` | Block until a task status, branch commit, or new task sheet changes, then print a summary and exit (exit 3 on timeout) | Implemented |
 
 ## Principles
 

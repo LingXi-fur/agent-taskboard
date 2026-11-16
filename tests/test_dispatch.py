@@ -81,9 +81,27 @@ class DispatchTests(unittest.TestCase):
             self.assertIn("T003", out)
             self.assertNotIn("T004", out)  # done tasks are excluded
             self.assertIn("prompt T001", out)
+            self.assertIn("start T001", out)  # todo: start before prompt
             self.assertIn("按交接文本执行", out)
             self.assertIn("被打回了", out)
             self.assertIn(str(repo), out)
+
+    def test_dispatch_todo_vs_doing_wording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup(Path(tmp))
+            self._write(repo, "T001", "Todo task", status="todo")
+            self._write(repo, "T002", "Doing task", status="doing")
+
+            out = self._atb(repo, "dispatch").stdout
+            self.assertIn("start T001", out)
+            self.assertIn("prompt T001", out)
+            self.assertIn("prompt T002", out)
+            self.assertNotIn("start T002", out)  # doing: prompt only
+
+            out = self._atb(repo, "dispatch", "--lang", "en").stdout
+            self.assertIn("start T001", out)
+            self.assertIn("prompt T001", out)
+            self.assertNotIn("start T002", out)
 
     def test_dispatch_en(self):
         with tempfile.TemporaryDirectory() as tmp:

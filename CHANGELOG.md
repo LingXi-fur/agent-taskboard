@@ -3,6 +3,17 @@
 All notable changes to `atb` are documented in this file.
 `atb` 的重要变更记录在此文件中。
 
+## [0.1.2] - 2026-11-16
+
+### Added / 新增
+
+- `atb status` now shows **`DIRTY`** (uncommitted files in the worktree) and **`IDLE`** (time since the latest branch commit or uncommitted-file mtime, e.g. `3m`/`2h`/`1d`); `--json` gains `dirty` and `idle_seconds`. / `atb status` 新增 **`DIRTY`**（worktree 未提交文件数）与 **`IDLE`**（距最近分支提交或未提交文件 mtime 的时长，如 `3m`/`2h`/`1d`）两列；`--json` 新增 `dirty`、`idle_seconds`。
+- **`atb watch [--interval S] [--timeout S] [--json]`** — block until a task status changes, a branch gains commits, or a new task sheet appears, then print a one-line-per-change summary and exit (exit 3 on timeout). / 新增 `atb watch`：阻塞等待任务状态变化、分支新提交或新增任务单，逐行打印变化摘要后退出（超时退出码 3）。
+
+### Fixed / 修复
+
+- `atb dispatch`: `todo` tasks now tell the agent to run `start` first and then `prompt`; `doing` still only asks for `prompt`. / `atb dispatch`：`todo` 任务的转发句改为"先 `start` 再 `prompt`"，`doing` 仍只提示 `prompt`。
+
 ## [0.1.1] - 2026-11-15
 
 ### Added / 新增
