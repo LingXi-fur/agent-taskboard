@@ -19,7 +19,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import checks, config, gitops, prompts, render, scope
+from . import checks, config, gc, gitops, prompts, render, scope
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -1048,6 +1048,33 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# gc
+# --------------------------------------------------------------------------- #
+
+def cmd_gc(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
+    cfg = config.load_config(repo_root)
+    for task_id in args.ids:
+        _load_task(repo_root, task_id)
+    sheets = _load_tasks(repo_root)
+    result, exit_code = gc.run_gc(
+        repo_root,
+        cfg,
+        sheets,
+        task_ids=args.ids or None,
+        apply=args.apply,
+        include_unmerged=args.include_unmerged,
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(gc.render_gc(result))
+    return exit_code
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -1144,6 +1171,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_dispatch.add_argument("--json", action="store_true")
     p_dispatch.add_argument("--lang", choices=["zh", "en"], default="zh", help="checklist language")
     p_dispatch.set_defaults(func=cmd_dispatch)
+
+    p_gc = sub.add_parser("gc", help="clean up leftover worktrees and branches for done/dropped tasks")
+    p_gc.add_argument("ids", nargs="*", help="optional task ids to inspect/clean (e.g. T001 T003)")
+    p_gc.add_argument("--apply", action="store_true", help="actually remove eligible worktrees/branches")
+    p_gc.add_argument("--include-unmerged", action="store_true", help="remove clean worktrees for unmerged branches (branches are still kept)")
+    p_gc.add_argument("--json", action="store_true")
+    p_gc.set_defaults(func=cmd_gc)
 
     return parser
 

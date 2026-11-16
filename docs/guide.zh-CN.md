@@ -185,6 +185,14 @@ atb conflicts
 | `atb review ID [--out FILE] [--lang zh\|en]` | 生成审查表；`doing` 变为 `review`。 |
 | `atb rework ID --note TEXT`（或 `@file`） | 打回并追加返工记录。 |
 | `atb done ID [--merge] [--clean] [--force]` | 校验并收尾；可选合并和清理。 |
+| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或清理 `done`/`dropped` 任务遗留的 worktree 和分支。 |
 | `atb board --html FILE` | 导出单文件静态看板。 |
 
 所有命令都支持 `--help`；上面的参数就是当前 0.1.0 的实际范围。
+
+## 收尾清理（`atb gc`）
+
+合并时没加 `--clean`、手动合并或改成 `dropped` 的任务，会留下 worktree 和本地分支。`atb gc` 只检查 `done` 和 `dropped` 任务（绝不碰 `todo` / `doing` / `review` / `rework`），为每个候选给出 `remove`、`skip: dirty`、`skip: unmerged` 或 `skip: missing` 结论。
+
+- **默认只预览（dry-run）：** 直接运行 `atb gc` 仅列出候选和处理结论，不删任何目录或分支；加 `--apply` 才真正删除。
+- **永不强删分支：** `atb gc --apply` 只调用 `git worktree remove`（有改动会拒绝）和 `git branch -d`（绝不用 `-D`）。对于有未合并提交的 `dropped` 任务，即使加上 `--include-unmerged` 也只删除干净的 worktree，分支继续保留，需要人工确认后再处理。

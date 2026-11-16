@@ -185,6 +185,14 @@ atb conflicts
 | `atb review ID [--out FILE] [--lang zh\|en]` | Build a review sheet; `doing` becomes `review`. |
 | `atb rework ID --note TEXT` (or `@file`) | Send back and append rework notes. |
 | `atb done ID [--merge] [--clean] [--force]` | Verify and finish; optional merge and cleanup. |
+| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or clean up leftover worktrees and branches for `done`/`dropped` tasks. |
 | `atb board --html FILE` | Export a standalone static board. |
 
 All commands accept `--help`; the flags above are the current 0.1.0 surface.
+
+## Cleanup (`atb gc`)
+
+Tasks merged without `--clean`, merged manually, or marked `dropped` leave worktrees and local branches behind. `atb gc` inspects `done` and `dropped` tasks only (`todo` / `doing` / `review` / `rework` are never touched) and classifies each candidate as `remove`, `skip: dirty`, `skip: unmerged`, or `skip: missing`.
+
+- **Dry-run by default:** `atb gc` only prints what would happen without deleting anything. Pass `--apply` to execute removals.
+- **Never force-deletes branches:** `atb gc --apply` uses `git worktree remove` (refuses when dirty) and `git branch -d` (never `-D`). For `dropped` tasks with unmerged commits, `--include-unmerged` still keeps the branch and only removes a clean worktree so unmerged work is never lost silently.
