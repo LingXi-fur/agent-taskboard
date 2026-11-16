@@ -231,13 +231,13 @@ def changed_files(
     return _dedup(paths)
 
 
-def uncommitted_files(
+def uncommitted_entries(
     worktree: str | Path, cwd: str | Path | None = None
-) -> list[str]:
-    """Return uncommitted paths (including untracked files) in ``worktree``.
+) -> list[tuple[str, list[str]]]:
+    """Return ``(status, paths)`` for each uncommitted entry.
 
-    Uses ``git status --porcelain=v1 -z --untracked-files=all`` and handles the
-    two-path form used for staged renames/copies.
+    A staged rename is one entry with two paths (old, new), matching what
+    ``git status --porcelain`` counts as a single line.
     """
     proc = _run(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -246,7 +246,7 @@ def uncommitted_files(
     tokens = proc.stdout.split("\0")
     if tokens and tokens[-1] == "":
         tokens.pop()
-    paths: list[str] = []
+    entries: list[tuple[str, list[str]]] = []
     i = 0
     while i < len(tokens):
         entry = tokens[i]
@@ -254,9 +254,44 @@ def uncommitted_files(
         if len(entry) < 3:
             continue
         xy = entry[:2]
-        path = entry[3:]  # skip the two status chars and the separating space
-        paths.append(path)
+        paths = [entry[3:]]  # skip the two status chars and the separating space
         if xy[0] in ("R", "C") and i < len(tokens):
             paths.append(tokens[i])  # original path
             i += 1
+        entries.append((xy, paths))
+    return entries
+
+
+def uncommitted_files(
+    worktree: str | Path, cwd: str | Path | None = None
+) -> list[str]:
+    """Return uncommitted paths (including untracked files) in ``worktree``.
+
+    Uses ``git status --porcelain=v1 -z --untracked-files=all`` and handles the
+    two-path form used for staged renames/copies.
+    """
+    paths: list[str] = []
+    for _status, entry_paths in uncommitted_entries(worktree, cwd):
+        paths.extend(entry_paths)
     return _dedup(paths)
+
+
+def commit_time(ref: str, cwd: str | Path | None = None) -> float:
+    """Return the committer timestamp (Unix seconds) of ``ref``'s tip commit."""
+    out = _run(["log", "-1", "--format=%ct", ref], cwd=cwd).stdout.strip()
+    return float(out) if out else 0.0
+
+
+def latest_mtime(
+    root: str | Path, paths: Iterable[str]
+) -> float | None:
+    """Return the newest ``st_mtime`` among existing ``paths`` under ``root``."""
+    latest: float | None = None
+    for rel in paths:
+        try:
+            mtime = (Path(root) / rel).stat().st_mtime
+        except OSError:
+            continue
+        if latest is None or mtime > latest:
+            latest = mtime
+    return latest

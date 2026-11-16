@@ -594,6 +594,17 @@ def _truncate_width(text: str, max_width: int) -> str:
     return result + ellipsis
 
 
+def format_idle(seconds: int) -> str:
+    """Format an idle duration as ``45s`` / ``3m`` / ``2h`` / ``1d``."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
 def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     row: dict = {
         "id": sheet.id,
@@ -607,6 +618,8 @@ def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "changed_files": None,
         "violations": None,
         "test": checks.last_test_result(repo_root, sheet.id),
+        "dirty": None,
+        "idle_seconds": None,
     }
     if sheet.status not in checks.ACTIVE_STATUSES:
         return row
@@ -619,12 +632,20 @@ def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         return row
     try:
         ahead, behind = gitops.rev_list_count(cfg.target, sheet.branch, cwd=repo_root)
-        paths = checks.task_changed_paths(sheet, cfg, repo_root)
-        denied, outside = checks.classify_violations(paths, sheet.allow, sheet.deny)
+        entries = gitops.uncommitted_entries(worktree)
+        uncommitted_paths = [path for _status, paths in entries for path in paths]
+        committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+        all_paths = list(dict.fromkeys(committed + uncommitted_paths))
+        denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
         row["ahead"] = ahead
         row["behind"] = behind
-        row["changed_files"] = len(paths)
+        row["changed_files"] = len(all_paths)
         row["violations"] = len(denied) + len(outside)
+        row["dirty"] = len(entries)
+        commit_ts = gitops.commit_time(sheet.branch, cwd=repo_root)
+        latest = gitops.latest_mtime(worktree, uncommitted_paths)
+        activity = commit_ts if latest is None else max(commit_ts, latest)
+        row["idle_seconds"] = max(0, int(time.time() - activity))
     except gitops.GitError:
         row["missing"] = True
     return row
@@ -649,7 +670,9 @@ def _status_cells(row: dict) -> tuple[str, ...]:
     else:
         ahead_behind = f"+{row['ahead']}/-{row['behind']}"
     files = str(row["changed_files"]) if row["changed_files"] is not None else "—"
+    dirty = str(row["dirty"]) if row["dirty"] is not None else "—"
     violations = str(row["violations"]) if row["violations"] is not None else "—"
+    idle = format_idle(row["idle_seconds"]) if row["idle_seconds"] is not None else "—"
     test = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
     return (
         row["id"],
@@ -659,7 +682,9 @@ def _status_cells(row: dict) -> tuple[str, ...]:
         branch,
         ahead_behind,
         files,
+        dirty,
         violations,
+        idle,
         test,
     )
 
@@ -679,7 +704,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps({"tasks": rows, "summary": summary}, ensure_ascii=False, indent=2))
     else:
-        headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "VIOL", "TEST")
+        headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "DIRTY", "VIOL", "IDLE", "TEST")
         print(_render_columns(headers, [_status_cells(row) for row in rows]))
         print("  ".join(f"{status}: {summary[status]}" for status in STATUSES))
     return 0
@@ -1000,6 +1025,13 @@ def _dispatch_message(repo_root: Path, sheet: Sheet, lang: str) -> str:
                 f'the "Rework" section at the top is what to change. '
                 f"Reply in English; do not push or merge when done."
             )
+        if sheet.status == "todo":
+            return (
+                f"In {repo}, first run `PYTHONPATH=src python3 -m agent_taskboard "
+                f"start {sheet.id}`, then run `PYTHONPATH=src python3 -m "
+                f"agent_taskboard prompt {sheet.id}` and follow the handoff. "
+                f"Reply in English; do not push or merge when done."
+            )
         return (
             f"In {repo}, run `PYTHONPATH=src python3 -m agent_taskboard prompt "
             f"{sheet.id}` and follow the handoff. Reply in English; do not push "
@@ -1010,6 +1042,12 @@ def _dispatch_message(repo_root: Path, sheet: Sheet, lang: str) -> str:
             f'{sheet.id} 被打回了，请在 {repo} 运行 '
             f'PYTHONPATH=src python3 -m agent_taskboard prompt {sheet.id}，'
             f'最前面的"返工"小节就是要改的内容。全程中文，完成后不要 push、不要合并。'
+        )
+    if sheet.status == "todo":
+        return (
+            f"请在 {repo} 先运行 PYTHONPATH=src python3 -m agent_taskboard start "
+            f"{sheet.id}，再运行 PYTHONPATH=src python3 -m agent_taskboard prompt "
+            f"{sheet.id}，按交接文本执行。全程中文，完成后不要 push、不要合并。"
         )
     return (
         f"请在 {repo} 运行 PYTHONPATH=src python3 -m agent_taskboard prompt "
@@ -1072,6 +1110,91 @@ def cmd_gc(args: argparse.Namespace) -> int:
     else:
         print(gc.render_gc(result))
     return exit_code
+
+
+# --------------------------------------------------------------------------- #
+# watch
+# --------------------------------------------------------------------------- #
+
+def _watch_snapshot(repo_root: Path) -> dict[str, dict]:
+    """Snapshot each task's status and branch tip (read-only, never fetches)."""
+    snapshot: dict[str, dict] = {}
+    for sheet in _load_tasks(repo_root):
+        tip = None
+        if sheet.branch and gitops.branch_exists(sheet.branch, cwd=repo_root):
+            try:
+                tip = gitops.rev_parse(sheet.branch, cwd=repo_root)
+            except gitops.GitError:
+                tip = None
+        snapshot[sheet.id] = {"status": sheet.status, "tip": tip}
+    return snapshot
+
+
+def _watch_changes(old: dict, new: dict, repo_root: Path) -> list[str]:
+    changes: list[str] = []
+    for task_id in sorted(set(new) - set(old)):
+        changes.append(f"{task_id} 新增任务")
+    for task_id in sorted(set(old) & set(new)):
+        before, after = old[task_id], new[task_id]
+        if before["status"] != after["status"]:
+            changes.append(f"{task_id} {before['status']} → {after['status']}")
+        if before["tip"] and after["tip"] and before["tip"] != after["tip"]:
+            try:
+                count = gitops.rev_list_count(
+                    before["tip"], after["tip"], cwd=repo_root
+                )[0]
+            except gitops.GitError:
+                count = 0
+            if count > 0:
+                changes.append(f"{task_id} 新提交 {count} 个（{after['tip'][:7]}）")
+    return changes
+
+
+def _watch_report(args: argparse.Namespace, changes: list[str]) -> int:
+    if args.json:
+        print(json.dumps(
+            {"changed": True, "changes": changes, "timeout": False},
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        for line in changes:
+            print(line)
+    return 0
+
+
+def _watch_timeout(args: argparse.Namespace) -> int:
+    if args.json:
+        print(json.dumps(
+            {"changed": False, "changes": [], "timeout": True},
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        print("无变化")
+    return 3
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    interval = args.interval
+    deadline = time.monotonic() + args.timeout if args.timeout is not None else None
+    baseline = _watch_snapshot(repo_root)
+
+    while True:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return _watch_timeout(args)
+            wait = min(interval, remaining)
+        else:
+            wait = interval
+        time.sleep(wait)
+
+        changes = _watch_changes(baseline, _watch_snapshot(repo_root), repo_root)
+        if changes:
+            return _watch_report(args, changes)
+        if deadline is not None and time.monotonic() >= deadline:
+            return _watch_timeout(args)
 
 
 # --------------------------------------------------------------------------- #
@@ -1178,6 +1301,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_gc.add_argument("--include-unmerged", action="store_true", help="remove clean worktrees for unmerged branches (branches are still kept)")
     p_gc.add_argument("--json", action="store_true")
     p_gc.set_defaults(func=cmd_gc)
+
+    p_watch = sub.add_parser("watch", help="wait until a task changes, then exit")
+    p_watch.add_argument("--interval", type=float, default=30.0, help="poll interval in seconds")
+    p_watch.add_argument("--timeout", type=float, default=None, help="give up after SECONDS (exit 3)")
+    p_watch.add_argument("--json", action="store_true")
+    p_watch.set_defaults(func=cmd_watch)
 
     return parser
 
