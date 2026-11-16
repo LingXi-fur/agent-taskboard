@@ -9,6 +9,7 @@ All notable changes to `atb` are documented in this file.
 
 - `atb status` now shows **`DIRTY`** (uncommitted files in the worktree) and **`IDLE`** (time since the latest branch commit or uncommitted-file mtime, e.g. `3m`/`2h`/`1d`); `--json` gains `dirty` and `idle_seconds`. / `atb status` 新增 **`DIRTY`**（worktree 未提交文件数）与 **`IDLE`**（距最近分支提交或未提交文件 mtime 的时长，如 `3m`/`2h`/`1d`）两列；`--json` 新增 `dirty`、`idle_seconds`。
 - **`atb watch [--interval S] [--timeout S] [--json]`** — block until a task status changes, a branch gains commits, or a new task sheet appears, then print a one-line-per-change summary and exit (exit 3 on timeout). / 新增 `atb watch`：阻塞等待任务状态变化、分支新提交或新增任务单，逐行打印变化摘要后退出（超时退出码 3）。
+- **`atb gc [ID...] [--apply] [--include-unmerged] [--json]`** — list leftover worktrees and branches of `done`/`dropped` tasks and, with `--apply`, remove them. Dry-run by default; dirty worktrees and unmerged branches are skipped, branches are deleted only with `git branch -d`, and `--include-unmerged` removes the clean worktree but always keeps the branch. / 新增 `atb gc`：列出 `done`/`dropped` 任务残留的 worktree 和分支，加 `--apply` 才删除；默认只预览，有改动的 worktree 和未合并分支跳过，分支只用 `git branch -d` 删除，`--include-unmerged` 只删干净的 worktree、始终保留分支。
 
 ### Fixed / 修复
 
