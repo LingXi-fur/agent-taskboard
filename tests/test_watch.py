@@ -1,5 +1,6 @@
 """Tests for ``atb watch`` (status change, new commit, new sheet, timeout)."""
 
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from agent_taskboard import sheet as sheet_mod
+from agent_taskboard.cli import _watch_changes
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -148,6 +150,167 @@ class WatchTests(unittest.TestCase):
             data = json.loads(result.stdout)
             self.assertFalse(data["changed"])
             self.assertTrue(data["timeout"])
+
+    # ------------------------------------------------------------------ #
+    # stall / activity / robustness
+    # ------------------------------------------------------------------ #
+
+    def _age_base_commit(self, repo: Path, epoch: float) -> None:
+        stamp = f"@{int(epoch)}"
+        env = self._env(repo)
+        env["GIT_AUTHOR_DATE"] = stamp
+        env["GIT_COMMITTER_DATE"] = stamp
+        subprocess.run(
+            ["git", "commit", "--amend", "--allow-empty", "--no-edit"],
+            cwd=str(repo), env=env, capture_output=True, text=True, check=True,
+        )
+
+    def _branch_of(self, repo: Path, tid: str) -> str:
+        return sheet_mod.parse(
+            (repo / ".taskboard" / "tasks" / f"{tid}.md").read_text(encoding="utf-8")
+        ).branch
+
+    def test_stall_crosses_threshold(self):
+        # Deterministic unit test: idle goes from below to above the threshold.
+        prev = {"T001": {"status": "doing", "tip": "a" * 40, "dirty": 0, "idle": 100}}
+        cur = {"T001": {"status": "doing", "tip": "a" * 40, "dirty": 0, "idle": 200}}
+        reported: set[str] = set()
+        changes = _watch_changes(
+            prev, cur, ROOT, stall_seconds=120, activity=False,
+            reported_stall=reported,
+        )
+        kinds = [c["kind"] for c in changes]
+        self.assertEqual(kinds, ["stall"])
+        self.assertEqual(changes[0]["id"], "T001")
+        # a task is reported at most once per run
+        again = _watch_changes(
+            cur, cur, ROOT, stall_seconds=120, activity=False,
+            reported_stall=reported,
+        )
+        self.assertEqual(again, [])
+
+    def test_stall_immediate_and_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._age_base_commit(repo, time.time() - 7200)  # base commit 2h old
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+
+            started = time.monotonic()
+            result = self._atb(
+                repo, "watch", "--interval", "0.2", "--timeout", "6", "--stall", "30"
+            )
+            elapsed = time.monotonic() - started
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("无活动", result.stdout)
+            self.assertEqual(result.stdout.count("无活动"), 1)
+            self.assertLess(elapsed, 4, "already-stalled tasks should report immediately")
+
+    def test_stall_crossing_e2e(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._age_base_commit(repo, time.time() - 1)
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+
+            result = self._atb(
+                repo, "watch", "--interval", "0.1", "--timeout", "8",
+                "--stall", str(4 / 60),
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("无活动", result.stdout)
+
+    def test_activity_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            wt = base / "wts" / "T001"
+
+            rc, out, err = self._watch(
+                repo, self._args() + ["--activity"],
+                lambda: (wt / "src" / "new.py").write_text("x\n", encoding="utf-8"),
+            )
+            self.assertEqual(rc, 0, out + err)
+            self.assertIn("T001 未提交改动 0 → 1", out)
+
+    def test_sheet_error_after_three_rounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo, "T001", "Task")
+
+            def mutate():
+                (repo / ".taskboard" / "tasks" / "T002.md").write_text(
+                    "+++\nthis is not valid toml\n+++\n\nbody\n", encoding="utf-8"
+                )
+
+            rc, out, err = self._watch(repo, self._args(), mutate)
+            self.assertEqual(rc, 0, out + err)
+            self.assertIn("T002 任务单无法解析", out)
+
+    def test_branch_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            branch = self._branch_of(repo, "T001")
+
+            def mutate():
+                self._git(repo, "worktree", "remove", str(base / "wts" / "T001"))
+                self._git(repo, "branch", "-D", branch)
+
+            rc, out, err = self._watch(repo, self._args(), mutate)
+            self.assertEqual(rc, 0, out + err)
+            self.assertIn("T001 分支已删除", out)
+
+    def test_branch_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            (repo / "src" / "second.py").write_text("2\n", encoding="utf-8")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-qm", "second")
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            wt = base / "wts" / "T001"
+
+            def mutate():
+                self._git(wt, "reset", "--hard", "HEAD~1")
+                (wt / "src" / "rewritten.py").write_text("r\n", encoding="utf-8")
+                self._git(wt, "add", "-A")
+                self._git(wt, "commit", "-qm", "rewritten")
+
+            rc, out, err = self._watch(repo, self._args(), mutate)
+            self.assertEqual(rc, 0, out + err)
+            self.assertIn("分支被改写", out)
+            self.assertNotIn("新提交 0 个", out)
+
+    def test_json_structured_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+
+            rc, out, err = self._watch(
+                repo, self._args() + ["--json"],
+                lambda: self._atb(repo, "rework", "T001", "--note", "x"),
+            )
+            self.assertEqual(rc, 0, out + err)
+            data = json.loads(out)
+            self.assertTrue(data["changed"])
+            self.assertFalse(data["timeout"])
+            for change in data["changes"]:
+                self.assertEqual(
+                    set(change), {"id", "kind", "from", "to", "text"}
+                )
+            kinds = {c["kind"] for c in data["changes"]}
+            self.assertIn("status", kinds)
 
 
 if __name__ == "__main__":

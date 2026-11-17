@@ -122,7 +122,26 @@ created = 2026-11-14T08:00:00Z
 | `atb done ID [--merge] [--clean] [--force]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree and branch | Implemented |
 | `atb board --html out.html` | Export a standalone static HTML task board | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
-| `atb watch [--interval S] [--timeout S] [--json]` | Block until a task status, branch commit, or new task sheet changes, then print a summary and exit (exit 3 on timeout) | Implemented |
+| `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until a task status/commit/new-sheet change, a stall, or an activity change, then print a summary and exit (exit 3 on timeout) | Implemented |
+
+### Watching for progress
+
+`atb watch` is meant to sit in a coordinator's terminal: it blocks until
+something worth looking at happens, then exits. Add `--stall` to catch agents
+that quietly stopped, and `--activity` to notice when they start editing:
+
+```bash
+atb watch --stall 30 --activity --timeout 3600
+```
+
+- `--stall MINUTES` — alert when a `doing`/`rework` task has had no activity
+  (no new commit and no recent uncommitted-file mtime) for MINUTES. Tasks that
+  are already stalled when the watch starts are reported immediately, and each
+  task is reported at most once per run.
+- `--activity` — alert when a task's uncommitted file count changes
+  (e.g. `T009 未提交改动 0 → 5`), i.e. the agent just started editing.
+- `--json` — emit structured changes (`id`, `kind`, `from`, `to`, `text`), with
+  `kind` one of `status`/`commits`/`new_task`/`stall`/`activity`/`branch_deleted`/`branch_rewritten`/`sheet_error`.
 
 ## Principles
 

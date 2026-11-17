@@ -120,7 +120,20 @@ created = 2026-11-14T08:00:00Z
 | `atb done ID [--merge] [--clean] [--force]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree 与分支 | 已实现 |
 | `atb board --html out.html` | 导出单文件静态 HTML 看板 | 已实现 |
 | `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
-| `atb watch [--interval S] [--timeout S] [--json]` | 阻塞等待任务状态、分支提交或新增任务单发生变化，逐行打印摘要后退出（超时退出码 3） | 已实现 |
+| `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待任务状态/分支提交/新增任务单变化，或 stall/activity 告警，逐行打印摘要后退出（超时退出码 3） | 已实现 |
+
+### 监视进度
+
+`atb watch` 适合放在主会话/协调者的终端里：阻塞等待"值得一看"的变化后退出。
+加上 `--stall` 可以抓住悄悄停住的 Agent，加 `--activity` 能发现它开始改文件了：
+
+```bash
+atb watch --stall 30 --activity --timeout 3600
+```
+
+- `--stall MINUTES`：`doing`/`rework` 任务连续 MINUTES 分钟无活动（无新提交且未提交文件 mtime 不新）时告警；开始监视时已超阈值的任务会立即报出，且同一次运行内每个任务只报一次。
+- `--activity`：任务未提交文件数变化时告警（如 `T009 未提交改动 0 → 5`），代表 Agent 开工了。
+- `--json`：输出结构化的变化列表（`id`、`kind`、`from`、`to`、`text`），`kind` 取 `status`/`commits`/`new_task`/`stall`/`activity`/`branch_deleted`/`branch_rewritten`/`sheet_error`。
 
 ## 设计原则
 

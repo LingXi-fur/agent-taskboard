@@ -1116,49 +1116,161 @@ def cmd_gc(args: argparse.Namespace) -> int:
 # watch
 # --------------------------------------------------------------------------- #
 
-def _watch_snapshot(repo_root: Path) -> dict[str, dict]:
-    """Snapshot each task's status and branch tip (read-only, never fetches)."""
+WATCH_STALL_STATUSES = ("doing", "rework")
+
+
+def _watch_activity(cfg, sheet, repo_root, tip):
+    """Return ``(dirty, idle_seconds)`` for a task, or ``(None, None)``."""
+    if tip is None:
+        return None, None
+    worktree = checks.resolve_worktree(cfg, sheet)
+    if not worktree.exists():
+        return None, None
+    try:
+        entries = gitops.uncommitted_entries(worktree)
+        paths = [path for _status, ps in entries for path in ps]
+        commit_ts = gitops.commit_time(sheet.branch, cwd=repo_root)
+        latest = gitops.latest_mtime(worktree, paths)
+        activity = commit_ts if latest is None else max(commit_ts, latest)
+        return len(entries), max(0, int(time.time() - activity))
+    except gitops.GitError:
+        return None, None
+
+
+def _watch_scan(repo_root: Path, cfg) -> tuple[dict[str, dict], set[str]]:
+    """Snapshot each task plus the ids whose sheets failed to parse.
+
+    Reading only refs and task sheets; never fetches or writes anything.
+    """
     snapshot: dict[str, dict] = {}
-    for sheet in _load_tasks(repo_root):
+    failed: set[str] = set()
+    tasks_dir = _tasks_dir(repo_root)
+    if not tasks_dir.is_dir():
+        return snapshot, failed
+    for path in sorted(tasks_dir.glob("*.md")):
+        task_id = path.stem
+        try:
+            sheet = parse(path.read_text(encoding="utf-8"))
+        except AtbError:
+            failed.add(task_id)
+            continue
         tip = None
         if sheet.branch and gitops.branch_exists(sheet.branch, cwd=repo_root):
             try:
                 tip = gitops.rev_parse(sheet.branch, cwd=repo_root)
             except gitops.GitError:
                 tip = None
-        snapshot[sheet.id] = {"status": sheet.status, "tip": tip}
-    return snapshot
+        dirty, idle = _watch_activity(cfg, sheet, repo_root, tip)
+        snapshot[task_id] = {
+            "status": sheet.status,
+            "tip": tip,
+            "dirty": dirty,
+            "idle": idle,
+        }
+    return snapshot, failed
 
 
-def _watch_changes(old: dict, new: dict, repo_root: Path) -> list[str]:
-    changes: list[str] = []
-    for task_id in sorted(set(new) - set(old)):
-        changes.append(f"{task_id} 新增任务")
-    for task_id in sorted(set(old) & set(new)):
-        before, after = old[task_id], new[task_id]
-        if before["status"] != after["status"]:
-            changes.append(f"{task_id} {before['status']} → {after['status']}")
-        if before["tip"] and after["tip"] and before["tip"] != after["tip"]:
-            try:
-                count = gitops.rev_list_count(
-                    before["tip"], after["tip"], cwd=repo_root
-                )[0]
-            except gitops.GitError:
-                count = 0
-            if count > 0:
-                changes.append(f"{task_id} 新提交 {count} 个（{after['tip'][:7]}）")
+def _change(task_id, kind, text, *, source=None, target=None):
+    return {"id": task_id, "kind": kind, "from": source, "to": target, "text": text}
+
+
+def _stall_changes(snapshot: dict, stall_seconds, reported: set[str]) -> list[dict]:
+    if stall_seconds is None:
+        return []
+    changes: list[dict] = []
+    for task_id in sorted(snapshot):
+        state = snapshot[task_id]
+        if task_id in reported:
+            continue
+        if state["status"] not in WATCH_STALL_STATUSES:
+            continue
+        if state["idle"] is None or state["idle"] < stall_seconds:
+            continue
+        dirty = state["dirty"] if state["dirty"] is not None else 0
+        minutes = stall_seconds / 60
+        changes.append(_change(
+            task_id, "stall",
+            f"{task_id} 已 {minutes:g} 分钟无活动（未提交 {dirty} 个文件）",
+            target=state["idle"],
+        ))
+        reported.add(task_id)
     return changes
 
 
-def _watch_report(args: argparse.Namespace, changes: list[str]) -> int:
+def _watch_changes(
+    old: dict, new: dict, repo_root: Path, *,
+    stall_seconds, activity: bool, reported_stall: set[str],
+) -> list[dict]:
+    changes: list[dict] = []
+    for task_id in sorted(set(new) - set(old)):
+        changes.append(_change(
+            task_id, "new_task", f"{task_id} 新增任务",
+            target=new[task_id]["status"],
+        ))
+    for task_id in sorted(set(old) & set(new)):
+        before, after = old[task_id], new[task_id]
+        if before["status"] != after["status"]:
+            changes.append(_change(
+                task_id, "status",
+                f"{task_id} {before['status']} → {after['status']}",
+                source=before["status"], target=after["status"],
+            ))
+        if before["tip"] and after["tip"] and before["tip"] != after["tip"]:
+            try:
+                fast_forward = (
+                    gitops.merge_base(before["tip"], after["tip"], cwd=repo_root)
+                    == before["tip"]
+                )
+            except gitops.GitError:
+                fast_forward = False
+            if fast_forward:
+                try:
+                    count = gitops.rev_list_count(
+                        before["tip"], after["tip"], cwd=repo_root
+                    )[0]
+                except gitops.GitError:
+                    count = 0
+                if count > 0:
+                    changes.append(_change(
+                        task_id, "commits",
+                        f"{task_id} 新提交 {count} 个（{after['tip'][:7]}）",
+                        source=before["tip"], target=after["tip"],
+                    ))
+            else:
+                changes.append(_change(
+                    task_id, "branch_rewritten",
+                    f"{task_id} 分支被改写（{before['tip'][:7]} → {after['tip'][:7]}）",
+                    source=before["tip"], target=after["tip"],
+                ))
+        elif before["tip"] and not after["tip"]:
+            changes.append(_change(
+                task_id, "branch_deleted", f"{task_id} 分支已删除",
+                source=before["tip"],
+            ))
+        if (
+            activity
+            and before["dirty"] is not None
+            and after["dirty"] is not None
+            and before["dirty"] != after["dirty"]
+        ):
+            changes.append(_change(
+                task_id, "activity",
+                f"{task_id} 未提交改动 {before['dirty']} → {after['dirty']}",
+                source=before["dirty"], target=after["dirty"],
+            ))
+    changes.extend(_stall_changes(new, stall_seconds, reported_stall))
+    return changes
+
+
+def _watch_report(args: argparse.Namespace, changes: list[dict]) -> int:
     if args.json:
         print(json.dumps(
             {"changed": True, "changes": changes, "timeout": False},
             ensure_ascii=False, indent=2,
         ))
     else:
-        for line in changes:
-            print(line)
+        for change in changes:
+            print(change["text"])
     return 0
 
 
@@ -1176,10 +1288,22 @@ def _watch_timeout(args: argparse.Namespace) -> int:
 def cmd_watch(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
+    cfg = config.load_config(repo_root)
     interval = args.interval
+    stall_seconds = args.stall * 60 if args.stall is not None else None
     deadline = time.monotonic() + args.timeout if args.timeout is not None else None
-    baseline = _watch_snapshot(repo_root)
 
+    baseline, failed = _watch_scan(repo_root, cfg)
+    failure_counts = {task_id: 1 for task_id in failed}
+    reported_stall: set[str] = set()
+    reported_error: set[str] = set()
+
+    # Report tasks that are already stalled when the watch starts (immediately).
+    immediate = _stall_changes(baseline, stall_seconds, reported_stall)
+    if immediate:
+        return _watch_report(args, immediate)
+
+    previous = baseline
     while True:
         if deadline is not None:
             remaining = deadline - time.monotonic()
@@ -1190,9 +1314,29 @@ def cmd_watch(args: argparse.Namespace) -> int:
             wait = interval
         time.sleep(wait)
 
-        changes = _watch_changes(baseline, _watch_snapshot(repo_root), repo_root)
+        current, failed = _watch_scan(repo_root, cfg)
+        for task_id in list(failure_counts):
+            if task_id not in failed:
+                failure_counts.pop(task_id, None)
+        for task_id in failed:
+            failure_counts[task_id] = failure_counts.get(task_id, 0) + 1
+
+        changes = _watch_changes(
+            previous, current, repo_root,
+            stall_seconds=stall_seconds,
+            activity=args.activity,
+            reported_stall=reported_stall,
+        )
+        for task_id in sorted(failed):
+            if failure_counts.get(task_id, 0) >= 3 and task_id not in reported_error:
+                changes.append(_change(
+                    task_id, "sheet_error", f"{task_id} 任务单无法解析",
+                ))
+                reported_error.add(task_id)
+
         if changes:
             return _watch_report(args, changes)
+        previous = current
         if deadline is not None and time.monotonic() >= deadline:
             return _watch_timeout(args)
 
@@ -1305,6 +1449,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch = sub.add_parser("watch", help="wait until a task changes, then exit")
     p_watch.add_argument("--interval", type=float, default=30.0, help="poll interval in seconds")
     p_watch.add_argument("--timeout", type=float, default=None, help="give up after SECONDS (exit 3)")
+    p_watch.add_argument("--stall", type=float, default=None, help="alert when a doing/rework task has been idle for MINUTES")
+    p_watch.add_argument("--activity", action="store_true", help="alert when a task's uncommitted file count changes")
     p_watch.add_argument("--json", action="store_true")
     p_watch.set_defaults(func=cmd_watch)
 
