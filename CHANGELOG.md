@@ -10,6 +10,7 @@ All notable changes to `atb` are documented in this file.
 - `atb watch --stall MINUTES` — alert when a `doing`/`rework` task has been idle for at least MINUTES; tasks already stalled at start are reported immediately, each task at most once per run, and the message shows the actual idle time (`T009 已 10h 无活动（阈值 30 分钟，未提交 46 个文件）`). / `atb watch --stall MINUTES`：`doing`/`rework` 任务空闲达到阈值时告警；启动时已卡住立即报，每个任务每次运行只报一次，提示里显示实际空闲时长。
 - `atb watch --activity` — alert when a task's uncommitted file count changes (an agent just started editing). / `atb watch --activity`：任务未提交文件数变化时告警（代表 Agent 开工了）。
 - `atb watch --json` emits structured `changes` (`id`/`kind`/`from`/`to`/`text`). Recommended coordinator usage: `atb watch --stall 30 --activity --timeout 3600`. / `atb watch --json` 输出结构化 `changes`；协调者推荐用法 `atb watch --stall 30 --activity --timeout 3600`。
+- `atb board --html FILE --stall MINUTES` (default 120): the board gains `Dirty` and `Idle` columns, marks `doing`/`rework` tasks idle at least MINUTES with a visible “可能卡住” tag (not colour alone), and shows the generation time, threshold and stalled count at the top. / `atb board --html` 新增 `Dirty`、`Idle` 两列；`--stall`（默认 120 分钟）把空闲超阈值的 `doing`/`rework` 任务标为“可能卡住”（文字标记，不只靠颜色），页面顶部显示生成时间、阈值和卡住数量。
 
 ### Fixed / 修复
 
