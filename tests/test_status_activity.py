@@ -85,6 +85,9 @@ class StatusActivityTests(unittest.TestCase):
             self._write_sheet(repo, "T001", "Task")
 
             self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            # pretend the worktree was also created 2h ago
+            wt_git = base / "wts" / "T001" / ".git"
+            os.utime(wt_git, (now - 7200, now - 7200))
 
             # no uncommitted files: DIRTY 0, IDLE from the (2h old) commit
             result = self._atb(repo, "status")
@@ -113,6 +116,16 @@ class StatusActivityTests(unittest.TestCase):
             result = self._atb(repo, "status")
             self.assertIn("1m", result.stdout)
             self.assertNotIn("2h", result.stdout)
+
+    def test_fresh_worktree_is_not_idle_since_old_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base, commit_epoch=time.time() - 7200)  # base 2h old
+            self._write_sheet(repo, "T001", "Task")
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+
+            row = json.loads(self._atb(repo, "status", "--json").stdout)["tasks"][0]
+            self.assertLess(row["idle_seconds"], 120, "just started, not idle for 2h")
 
     def test_missing_worktree_shows_dash(self):
         with tempfile.TemporaryDirectory() as tmp:

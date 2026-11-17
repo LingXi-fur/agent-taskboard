@@ -196,6 +196,8 @@ class WatchTests(unittest.TestCase):
             self._age_base_commit(repo, time.time() - 7200)  # base commit 2h old
             self._write_sheet(repo, "T001", "Task")
             self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            old = time.time() - 7200  # worktree also created 2h ago
+            os.utime(base / "wts" / "T001" / ".git", (old, old))
 
             started = time.monotonic()
             result = self._atb(
@@ -205,6 +207,7 @@ class WatchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("无活动", result.stdout)
             self.assertEqual(result.stdout.count("无活动"), 1)
+            self.assertIn("已 2h 无活动（阈值 30 分钟", result.stdout)
             self.assertLess(elapsed, 4, "already-stalled tasks should report immediately")
 
     def test_stall_crossing_e2e(self):
@@ -251,6 +254,26 @@ class WatchTests(unittest.TestCase):
             rc, out, err = self._watch(repo, self._args(), mutate)
             self.assertEqual(rc, 0, out + err)
             self.assertIn("T002 任务单无法解析", out)
+
+    def test_briefly_unparsable_sheet_is_not_reported_as_new(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo, "T001", "Task")
+            sheet = repo / ".taskboard" / "tasks" / "T001.md"
+            good = sheet.read_text(encoding="utf-8")
+
+            def mutate():
+                sheet.write_text("+++\nhalf written\n", encoding="utf-8")
+                time.sleep(0.5)  # a couple of rounds, fewer than three
+                sheet.write_text(good, encoding="utf-8")
+
+            rc, out, err = self._watch(
+                repo, ["--interval", "0.2", "--timeout", "3"], mutate
+            )
+            self.assertEqual(rc, 3, out + err)
+            self.assertNotIn("新增任务", out)
+            self.assertNotIn("无法解析", out)
 
     def test_branch_deleted(self):
         with tempfile.TemporaryDirectory() as tmp:

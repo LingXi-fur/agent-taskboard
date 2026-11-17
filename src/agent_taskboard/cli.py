@@ -605,6 +605,25 @@ def format_idle(seconds: int) -> str:
     return f"{seconds // 86400}d"
 
 
+def _last_activity(
+    worktree: Path, branch: str, repo_root: Path, uncommitted_paths: list[str]
+) -> float:
+    """Latest of: branch tip commit, uncommitted file mtimes, worktree creation.
+
+    The worktree's ``.git`` file is written by ``git worktree add``, so a task
+    that was just started does not inherit the age of its base commit.
+    """
+    activity = gitops.commit_time(branch, cwd=repo_root)
+    latest = gitops.latest_mtime(worktree, uncommitted_paths)
+    if latest is not None:
+        activity = max(activity, latest)
+    try:
+        activity = max(activity, (worktree / ".git").stat().st_mtime)
+    except OSError:
+        pass
+    return activity
+
+
 def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     row: dict = {
         "id": sheet.id,
@@ -642,9 +661,7 @@ def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         row["changed_files"] = len(all_paths)
         row["violations"] = len(denied) + len(outside)
         row["dirty"] = len(entries)
-        commit_ts = gitops.commit_time(sheet.branch, cwd=repo_root)
-        latest = gitops.latest_mtime(worktree, uncommitted_paths)
-        activity = commit_ts if latest is None else max(commit_ts, latest)
+        activity = _last_activity(worktree, sheet.branch, repo_root, uncommitted_paths)
         row["idle_seconds"] = max(0, int(time.time() - activity))
     except gitops.GitError:
         row["missing"] = True
@@ -1129,9 +1146,7 @@ def _watch_activity(cfg, sheet, repo_root, tip):
     try:
         entries = gitops.uncommitted_entries(worktree)
         paths = [path for _status, ps in entries for path in ps]
-        commit_ts = gitops.commit_time(sheet.branch, cwd=repo_root)
-        latest = gitops.latest_mtime(worktree, paths)
-        activity = commit_ts if latest is None else max(commit_ts, latest)
+        activity = _last_activity(worktree, sheet.branch, repo_root, paths)
         return len(entries), max(0, int(time.time() - activity))
     except gitops.GitError:
         return None, None
@@ -1190,7 +1205,8 @@ def _stall_changes(snapshot: dict, stall_seconds, reported: set[str]) -> list[di
         minutes = stall_seconds / 60
         changes.append(_change(
             task_id, "stall",
-            f"{task_id} 已 {minutes:g} 分钟无活动（未提交 {dirty} 个文件）",
+            f"{task_id} 已 {format_idle(state['idle'])} 无活动"
+            f"（阈值 {minutes:g} 分钟，未提交 {dirty} 个文件）",
             target=state["idle"],
         ))
         reported.add(task_id)
@@ -1200,9 +1216,10 @@ def _stall_changes(snapshot: dict, stall_seconds, reported: set[str]) -> list[di
 def _watch_changes(
     old: dict, new: dict, repo_root: Path, *,
     stall_seconds, activity: bool, reported_stall: set[str],
+    known_ids: set[str] | None = None,
 ) -> list[dict]:
     changes: list[dict] = []
-    for task_id in sorted(set(new) - set(old)):
+    for task_id in sorted(set(new) - set(old) - (known_ids or set())):
         changes.append(_change(
             task_id, "new_task", f"{task_id} 新增任务",
             target=new[task_id]["status"],
@@ -1297,6 +1314,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
     failure_counts = {task_id: 1 for task_id in failed}
     reported_stall: set[str] = set()
     reported_error: set[str] = set()
+    # Sheets that exist at start (even if unparsable then) are not "new" later.
+    known_ids: set[str] = set(baseline) | set(failed)
 
     # Report tasks that are already stalled when the watch starts (immediately).
     immediate = _stall_changes(baseline, stall_seconds, reported_stall)
@@ -1315,6 +1334,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
         time.sleep(wait)
 
         current, failed = _watch_scan(repo_root, cfg)
+        # A sheet that fails to parse this round keeps its last known state,
+        # so it is neither dropped nor later re-reported as a new task.
+        for task_id in failed:
+            if task_id in previous:
+                current[task_id] = previous[task_id]
         for task_id in list(failure_counts):
             if task_id not in failed:
                 failure_counts.pop(task_id, None)
@@ -1326,7 +1350,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
             stall_seconds=stall_seconds,
             activity=args.activity,
             reported_stall=reported_stall,
+            known_ids=known_ids,
         )
+        known_ids.update(current)
         for task_id in sorted(failed):
             if failure_counts.get(task_id, 0) >= 3 and task_id not in reported_error:
                 changes.append(_change(
