@@ -69,7 +69,7 @@ def _parse_commit_list(stdout: str) -> list[tuple[str, str, int, str]]:
 
 def _status_events(
     repo_root: Path, task_id: str
-) -> tuple[list[dict[str, Any]], int, str | None]:
+) -> tuple[list[dict[str, Any]], int, str | None, str | None]:
     rel_path = f".taskboard/tasks/{task_id}.md"
     proc = _run_git(
         [
@@ -84,7 +84,7 @@ def _status_events(
         repo_root,
     )
     if proc.returncode != 0:
-        return [], 0, None
+        return [], 0, None, None
 
     events: list[dict[str, Any]] = []
     parse_errors = 0
@@ -125,7 +125,7 @@ def _status_events(
             })
             prev_status = sheet.status
 
-    return events, parse_errors, discovered_branch
+    return events, parse_errors, discovered_branch, prev_status
 
 
 def _test_events(
@@ -293,7 +293,25 @@ def collect_task_history(
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Collect chronological history events for ``sheet`` without writing anything."""
-    status_evts, parse_errors, hist_branch = _status_events(repo_root, sheet.id)
+    status_evts, parse_errors, hist_branch, last_committed_status = _status_events(
+        repo_root, sheet.id
+    )
+    if last_committed_status is not None and sheet.status != last_committed_status:
+        sheet_path = repo_root / ".taskboard" / "tasks" / f"{sheet.id}.md"
+        mtime = sheet_path.stat().st_mtime if sheet_path.exists() else datetime.now(timezone.utc).timestamp()
+        dt = datetime.fromtimestamp(mtime, tz=timezone.utc).astimezone()
+        time_local = _format_local(dt)
+        status_evts.append({
+            "kind": "status",
+            "_sort_ts": float(mtime),
+            "_order": 0,
+            "timestamp": dt.isoformat(),
+            "time_local": time_local,
+            "commit": "uncommitted",
+            "from": last_committed_status,
+            "to": sheet.status,
+            "text": f"{time_local}  uncommitted  {last_committed_status} → {sheet.status}",
+        })
     branch = sheet.branch or hist_branch
     test_evts = _test_events(repo_root, sheet.id, verbose=verbose)
     rework_evts, rework_notes = _rework_events(sheet)

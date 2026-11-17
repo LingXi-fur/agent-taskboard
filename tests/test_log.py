@@ -199,6 +199,18 @@ class LogTests(unittest.TestCase):
             self.assertIn("rework", kinds)
             self.assertIn("merge", kinds)
 
+    def test_log_includes_uncommitted_status_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup(Path(tmp))
+            new_res = self._atb(repo, "new", "Uncommitted transition", "--agent", "gemini", "--json")
+            tid = json.loads(new_res.stdout)["id"]
+            self._commit_sheet(repo, tid, "add sheet", "2026-11-16T08:00:00Z")
+            self.assertEqual(self._atb(repo, "start", tid).returncode, 0)
+
+            res = self._atb(repo, "log", tid)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("uncommitted  todo → doing", res.stdout)
+
     def test_log_missing_task_exits_friendly(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._setup(Path(tmp))
