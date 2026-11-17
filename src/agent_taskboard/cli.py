@@ -988,11 +988,19 @@ def cmd_done(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 def cmd_board(args: argparse.Namespace) -> int:
+    if args.stall < 1:
+        raise AtbError("--stall must be at least 1 minute")
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
     rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
+    for row in rows:
+        row["idle_text"] = (
+            format_idle(row["idle_seconds"])
+            if row["idle_seconds"] is not None
+            else "—"
+        )
 
     summary = {status: 0 for status in STATUSES}
     for row in rows:
@@ -1002,7 +1010,9 @@ def cmd_board(args: argparse.Namespace) -> int:
     active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
     conflicts = checks.compute_conflicts(active, cfg, repo_root)
 
-    html_text = render.render_board_html(rows, summary, conflicts)
+    html_text = render.render_board_html(
+        rows, summary, conflicts, stall_minutes=args.stall
+    )
     Path(args.html).write_text(html_text, encoding="utf-8")
     print(f"board written to {args.html}")
     return 0
@@ -1288,6 +1298,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_board = sub.add_parser("board", help="write a standalone static HTML board")
     p_board.add_argument("--html", required=True, metavar="FILE", help="output HTML file")
+    p_board.add_argument(
+        "--stall",
+        type=int,
+        default=120,
+        metavar="MINUTES",
+        help="highlight doing/rework tasks idle >= MINUTES (default: 120)",
+    )
     p_board.set_defaults(func=cmd_board)
 
     p_dispatch = sub.add_parser("dispatch", help="print a per-window dispatch checklist")
