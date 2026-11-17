@@ -8,6 +8,7 @@ with inline CSS, no external resources, and every task field is HTML-escaped.
 from __future__ import annotations
 
 import html
+from datetime import datetime
 
 # --------------------------------------------------------------------------- #
 # Review sheet (Markdown)
@@ -201,9 +202,35 @@ tr:last-child td { border-bottom: none; }
 .violations-bad { color: var(--bad); font-weight: 700; }
 .muted { color: var(--muted); }
 .summary { margin-top: 1rem; color: var(--muted); }
+.board-meta { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; }
+.board-meta .stall-count-alert { color: var(--bad); font-weight: 700; }
+tr.stall-row { background: rgba(207, 34, 46, 0.08); }
+tr.stall-row td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+.stall-tag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--bad);
+  color: var(--bad);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
 ul { padding-left: 1.25rem; }
 .conflict-bad { color: var(--bad); }
 """
+
+
+_STALL_STATUSES = ("doing", "rework")
+
+
+def _is_stalled(row: dict, stall_minutes: int) -> bool:
+    idle_seconds = row.get("idle_seconds")
+    return (
+        row.get("status") in _STALL_STATUSES
+        and isinstance(idle_seconds, int)
+        and idle_seconds >= stall_minutes * 60
+    )
 
 
 def _esc(value: object) -> str:
@@ -220,7 +247,7 @@ def _cell(value: object, cls: str | None = None) -> str:
     return f"<td{attr}>{_esc(value)}</td>"
 
 
-def _task_row_html(row: dict) -> str:
+def _task_row_html(row: dict, *, stall_minutes: int = 120) -> str:
     if row["missing"]:
         branch_cell = _cell("missing", "missing")
     else:
@@ -230,11 +257,19 @@ def _task_row_html(row: dict) -> str:
     else:
         ahead_behind = f"+{row['ahead']}/-{row['behind']}"
     files = row["changed_files"] if row["changed_files"] is not None else "—"
+    dirty = row["dirty"] if row.get("dirty") is not None else "—"
     violations = row["violations"] if row["violations"] is not None else "—"
     viol_cls = "violations-bad" if isinstance(row["violations"], int) and row["violations"] > 0 else None
+    idle_text = row.get("idle_text") or "—"
+    stalled = _is_stalled(row, stall_minutes)
+    if stalled:
+        idle_cell = f'<td>{_esc(idle_text)}<span class="stall-tag">可能卡住</span></td>'
+    else:
+        idle_cell = _cell(idle_text)
     test_mark = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
+    row_attr = ' class="stall-row"' if stalled else ""
     return (
-        "<tr>"
+        f"<tr{row_attr}>"
         + _cell(row["id"])
         + f"<td>{_status_badge(row['status'])}</td>"
         + _cell(row["agent"])
@@ -242,7 +277,9 @@ def _task_row_html(row: dict) -> str:
         + branch_cell
         + _cell(ahead_behind)
         + _cell(files)
+        + _cell(dirty)
         + _cell(violations, viol_cls)
+        + idle_cell
         + _cell(test_mark)
         + "</tr>"
     )
@@ -264,16 +301,34 @@ def _conflict_list_html(entries: list[dict], kind: str) -> str:
 
 
 def render_board_html(
-    tasks: list[dict], summary: dict, conflicts: dict
+    tasks: list[dict],
+    summary: dict,
+    conflicts: dict,
+    *,
+    stall_minutes: int = 120,
+    generated_at: str | None = None,
 ) -> str:
     """Render a self-contained static HTML board."""
     headers = (
         "ID", "Status", "Agent", "Title", "Branch",
-        "Ahead/Behind", "Files", "Violations", "Test",
+        "Ahead/Behind", "Files", "Dirty", "Violations", "Idle", "Test",
     )
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    rows = "".join(_task_row_html(row) for row in tasks)
+    rows = "".join(_task_row_html(row, stall_minutes=stall_minutes) for row in tasks)
+    stall_count = sum(1 for row in tasks if _is_stalled(row, stall_minutes))
     summary_text = " · ".join(f"{_esc(k)}: {summary[k]}" for k in summary)
+    if generated_at is None:
+        generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    stall_summary_cls = "stall-count-alert" if stall_count > 0 else ""
+    stall_summary_html = (
+        f'<span class="{stall_summary_cls}">可能卡住：{stall_count}</span>'
+        if stall_summary_cls
+        else f"可能卡住：{stall_count}"
+    )
+    top_summary_html = (
+        f'<p class="board-meta">生成于 {_esc(generated_at)}（阈值 {_esc(stall_minutes)} 分钟）'
+        f" · {stall_summary_html} · {summary_text}</p>"
+    )
 
     sections = [
         ("Real conflicts", _conflict_list_html(conflicts["conflicts"], "pair")),
@@ -295,6 +350,7 @@ def render_board_html(
         "</head>\n"
         "<body>\n"
         "<h1>atb board</h1>\n"
+        f"{top_summary_html}\n"
         f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>\n"
         f'<p class="summary">{summary_text}</p>\n'
         f"{conflicts_html}\n"

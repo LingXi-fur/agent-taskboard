@@ -268,8 +268,9 @@ class WatchTests(unittest.TestCase):
                 time.sleep(0.5)  # a couple of rounds, fewer than three
                 sheet.write_text(good, encoding="utf-8")
 
+            # 0.5s of breakage spans at most two 0.4s rounds, never three.
             rc, out, err = self._watch(
-                repo, ["--interval", "0.2", "--timeout", "3"], mutate
+                repo, ["--interval", "0.4", "--timeout", "3"], mutate
             )
             self.assertEqual(rc, 3, out + err)
             self.assertNotIn("新增任务", out)
