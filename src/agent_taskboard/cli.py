@@ -1028,7 +1028,7 @@ def cmd_board(args: argparse.Namespace) -> int:
     conflicts = checks.compute_conflicts(active, cfg, repo_root)
 
     html_text = render.render_board_html(
-        rows, summary, conflicts, stall_minutes=args.stall
+        rows, summary, conflicts, stall_minutes=args.stall, lang=args.lang
     )
     Path(args.html).write_text(html_text, encoding="utf-8")
     print(f"board written to {args.html}")
@@ -1475,6 +1475,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MINUTES",
         help="highlight doing/rework tasks idle >= MINUTES (default: 120)",
     )
+    p_board.add_argument("--lang", choices=["zh", "en"], default="zh", help="board language")
     p_board.set_defaults(func=cmd_board)
 
     p_dispatch = sub.add_parser("dispatch", help="print a per-window dispatch checklist")

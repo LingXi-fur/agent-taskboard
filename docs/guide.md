@@ -186,7 +186,7 @@ atb conflicts
 | `atb rework ID --note TEXT` (or `@file`) | Send back and append rework notes. |
 | `atb done ID [--merge] [--clean] [--force]` | Verify and finish; optional merge and cleanup. |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or clean up leftover worktrees and branches for `done`/`dropped` tasks. |
-| `atb board --html FILE [--stall MINUTES]` | Export a standalone static board (`--stall` highlights `doing`/`rework` tasks idle >= MINUTES, default 120). |
+| `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static board (`--stall` highlights `doing`/`rework` tasks idle >= MINUTES, default 120; `--lang` sets zh/en, default zh). |
 
 All commands accept `--help`; the flags above are the current 0.1.0 surface.
 
