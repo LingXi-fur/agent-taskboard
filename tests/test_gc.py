@@ -242,6 +242,32 @@ class GcTests(unittest.TestCase):
             # T002 remains locked and untouched
             self.assertTrue(wt2.exists())
             self.assertTrue(self._branch_exists(repo, br2))
+            by_id = {item["id"]: item for item in data["candidates"]}
+            self.assertEqual(by_id[t1]["result"], "removed")
+            self.assertEqual(by_id[t2]["result"], "failed")
+            self.assertEqual(data["summary"], {"removed": 1, "skipped": 0, "failed": 1})
+
+    def test_gc_apply_text_reports_what_was_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup_repo(Path(tmp))
+            t1, wt1, br1 = self._create_started_task(
+                repo, "Done clean", commit_file="a.txt", merge_into_main=True, status="done"
+            )
+            t2, wt2, br2 = self._create_started_task(
+                repo, "Dropped unmerged", commit_file="b.txt", merge_into_main=False, status="dropped"
+            )
+            res = self._atb(repo, "gc", "--apply")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn(f"{t1} [done] removed worktree and branch", res.stdout)
+            self.assertNotIn("ready to remove", res.stdout)
+            self.assertIn(f"{t2} [dropped] -> skip: unmerged", res.stdout)
+            self.assertIn("removed 1, skipped 1, failed 0", res.stdout)
+            self.assertNotIn("dry-run only", res.stdout)
+
+            res = self._atb(repo, "gc", "--include-unmerged", "--apply")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn(f"{t2} [dropped] removed worktree; branch kept", res.stdout)
+            self.assertTrue(self._branch_exists(repo, br2))
 
 
 if __name__ == "__main__":

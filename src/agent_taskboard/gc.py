@@ -197,10 +197,16 @@ def run_gc(
     errors: list[dict[str, str]] = []
     if apply:
         for item in candidates:
+            if item["action"] not in ("remove", "remove-worktree"):
+                item["result"] = "skipped"
+                continue
             err = apply_candidate(item, repo_root)
             if err is not None:
                 errors.append({"id": item["id"], "error": err})
                 item["error"] = err
+                item["result"] = "failed"
+            else:
+                item["result"] = "removed"
 
     result = {
         "apply": apply,
@@ -208,6 +214,11 @@ def run_gc(
         "candidates": candidates,
         "errors": errors,
     }
+    if apply:
+        result["summary"] = {
+            outcome: sum(1 for item in candidates if item.get("result") == outcome)
+            for outcome in ("removed", "skipped", "failed")
+        }
     return result, (1 if errors else 0)
 
 
@@ -221,13 +232,29 @@ def render_gc(result: dict[str, Any]) -> str:
     for item in candidates:
         wt = item["worktree"] or "-"
         br = item["branch"] or "-"
-        lines.append(
-            f"{item['id']} [{item['status']}] -> {item['action']}: "
-            f"{item['reason']} (worktree={wt}, branch={br})"
-        )
-        if "error" in item:
+        outcome = item.get("result")
+        if outcome == "removed":
+            what = (
+                "removed worktree; branch kept"
+                if item["action"] == "remove-worktree"
+                else f"removed {_describe_targets(bool(item['worktree']), bool(item['branch']))}"
+            )
+            lines.append(f"{item['id']} [{item['status']}] {what} (worktree={wt}, branch={br})")
+        elif outcome == "failed":
+            lines.append(f"{item['id']} [{item['status']}] FAILED (worktree={wt}, branch={br})")
             lines.append(f"  error: {item['error']}")
+        else:
+            lines.append(
+                f"{item['id']} [{item['status']}] -> {item['action']}: "
+                f"{item['reason']} (worktree={wt}, branch={br})"
+            )
 
-    if not result["apply"]:
+    if result["apply"]:
+        summary = result.get("summary", {})
+        lines.append(
+            f"removed {summary.get('removed', 0)}, skipped {summary.get('skipped', 0)}, "
+            f"failed {summary.get('failed', 0)}"
+        )
+    else:
         lines.append("dry-run only; re-run with --apply to remove eligible items")
     return "\n".join(lines)

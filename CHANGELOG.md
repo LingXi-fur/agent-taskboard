@@ -3,6 +3,12 @@
 All notable changes to `atb` are documented in this file.
 `atb` 的重要变更记录在此文件中。
 
+## [Unreleased]
+
+### Fixed / 修复
+
+- `atb gc --apply` now reports what actually happened: each task line says `removed worktree and branch`, `removed worktree; branch kept` or `FAILED`, followed by a `removed N, skipped N, failed N` summary; `--json` adds a per-candidate `result` and a `summary` object. Previously the applied run still printed the dry-run wording `ready to remove`. / `atb gc --apply` 现在输出实际结果：每行写明已删除 worktree 和分支、只删 worktree 保留分支或失败，末尾汇总删除/跳过/失败数；`--json` 新增每项的 `result` 和 `summary`。此前执行后仍显示预览用语 `ready to remove`。
+
 ## [0.1.2] - 2026-11-16
 
 ### Added / 新增
