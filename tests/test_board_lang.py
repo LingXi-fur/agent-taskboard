@@ -127,6 +127,17 @@ class BoardLangTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden_ui, zh_html)
 
+            # Chinese UI shell (excluding <style>, <tbody> task data, and <ul> conflict items) allows only ID/Agent/atb
+            zh_ui = re.sub(r"<style>.*?</style>", "", zh_html, flags=re.S)
+            zh_ui = re.sub(r"<tbody>.*?</tbody>", "", zh_ui, flags=re.S)
+            zh_ui = re.sub(r"<ul>.*?</ul>", "", zh_ui, flags=re.S)
+            zh_ui_text = re.sub(r"<[^>]+>", " ", zh_ui)
+            ascii_words = set(re.findall(r"[A-Za-z]+", zh_ui_text))
+            self.assertTrue(
+                ascii_words <= {"atb", "ID", "Agent"},
+                f"unexpected English UI words in zh board: {ascii_words}",
+            )
+
             en_out = base / "board-en.html"
             res_en = self._atb(
                 repo, "board", "--html", str(en_out), "--stall", "30", "--lang", "en"
