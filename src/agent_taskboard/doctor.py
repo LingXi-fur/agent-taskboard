@@ -84,9 +84,9 @@ def _check_config(repo_root: Path) -> tuple[dict[str, Any], config.Config | None
         hints.append(f"create {cfg.target!r} or update target in .taskboard/config.toml")
 
     wt_root = config.resolve_worktree_root(cfg, repo_root)
-    probe = _writable_probe(wt_root.parent)
+    probe = _writable_probe(wt_root if wt_root.exists() else wt_root.parent)
     if not os.access(probe, os.W_OK | os.X_OK):
-        issues.append(f"worktree_root parent {str(probe)!r} is not writable")
+        issues.append(f"worktree_root location {str(probe)!r} is not writable")
         hints.append("fix directory permissions or change worktree_root in .taskboard/config.toml")
 
     if issues:
@@ -246,6 +246,10 @@ def _check_orphan_worktrees(
     known_wts = {
         checks.resolve_worktree(cfg, sheet).resolve() for sheet in valid_sheets
     }
+    tasks_dir = repo_root / ".taskboard" / "tasks"
+    if tasks_dir.is_dir():
+        for sheet_path in tasks_dir.glob("*.md"):
+            known_wts.add((wt_root / sheet_path.stem).resolve())
     try:
         entries = gitops.worktree_list(cwd=repo_root)
     except gitops.GitError as exc:

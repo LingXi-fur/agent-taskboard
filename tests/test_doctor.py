@@ -122,6 +122,16 @@ class DoctorTests(unittest.TestCase):
             by_name2 = self._by_name(json.loads(res2.stdout))
             self.assertEqual(by_name2["config"]["status"], "FAIL")
 
+    def test_doctor_unwritable_worktree_root_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup(Path(tmp))
+            with mock.patch("agent_taskboard.doctor.os.access", return_value=False):
+                payload, exit_code = doctor.run_doctor(repo)
+            self.assertEqual(exit_code, 1)
+            cfg_chk = self._by_name(payload)["config"]
+            self.assertEqual(cfg_chk["status"], "FAIL")
+            self.assertIn("not writable", cfg_chk["message"])
+
     def test_doctor_sheets_bad_toml_mismatch_and_missing_depends_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._setup(Path(tmp))
