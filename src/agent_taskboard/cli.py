@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -792,6 +793,20 @@ def _acceptance_text(body: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _task_doctor_fails(repo_root: Path, task_id: str) -> list[str]:
+    """Return doctor FAIL messages specifically mentioning ``task_id``."""
+    doc_payload, _ = doctor.run_doctor(repo_root)
+    pattern = re.compile(rf"\b{re.escape(task_id)}\b")
+    fails: list[str] = []
+    for item in doc_payload["checks"]:
+        if item["status"] != "FAIL":
+            continue
+        for part in str(item["message"]).split("; "):
+            if pattern.search(part):
+                fails.append(f"[{item['name']}] {part}")
+    return fails
+
+
 def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     """Gather everything the review template needs into one plain dict."""
     committed = checks.task_committed(sheet, repo_root)
@@ -804,6 +819,13 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     ]
     result = checks.compute_conflicts([sheet] + other_active, cfg, repo_root)
     conflicts, mergeable, drift = _conflicts_for(sheet.id, result)
+    board_row = _task_board_row(sheet, cfg, repo_root)
+    idle_seconds = board_row["idle_seconds"]
+    idle_text = format_idle(idle_seconds) if idle_seconds is not None else "—"
+    hist = history.collect_task_history(repo_root, cfg, sheet)
+    status_events = [e for e in hist["events"] if e["kind"] == "status"][-10:]
+    test_events = [e for e in hist["events"] if e["kind"] == "test"]
+    last_test_detail = test_events[-1] if test_events else None
     return {
         "id": sheet.id,
         "title": sheet.title,
@@ -815,6 +837,12 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "outside": outside,
         "uncommitted": uncommitted,
         "test": checks.last_test_result(repo_root, sheet.id),
+        "dirty": board_row["dirty"],
+        "idle": idle_text,
+        "rework_count": hist["rework_count"],
+        "last_test_detail": last_test_detail,
+        "status_history": status_events,
+        "doctor_fails": _task_doctor_fails(repo_root, sheet.id),
         "diffstat": gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root),
         "conflicts": conflicts,
         "mergeable": mergeable,
