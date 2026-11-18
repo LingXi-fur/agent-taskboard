@@ -39,10 +39,84 @@ def _conflict_lines(info: dict, zh: bool) -> list[str]:
     return lines
 
 
+def _format_last_test_detail(detail: dict | None, *, zh: bool) -> str:
+    if not detail:
+        return "— 无记录" if zh else "— no record"
+    time_local = detail.get("time_local", "—")
+    exit_code = detail.get("exit_code")
+    duration = detail.get("duration")
+    if zh:
+        dur = f"（{float(duration):.1f}s）" if isinstance(duration, (int, float)) else ""
+        return f"{time_local}，exit {exit_code}{dur}"
+    dur = f" ({float(duration):.1f}s)" if isinstance(duration, (int, float)) else ""
+    return f"{time_local}, exit {exit_code}{dur}"
+
+
+def _activity_history_lines(info: dict, *, zh: bool) -> list[str]:
+    dirty = info.get("dirty")
+    dirty_text = str(dirty) if dirty is not None else "—"
+    idle_text = info.get("idle") or "—"
+    rework_count = info.get("rework_count", 0)
+    last_test_text = _format_last_test_detail(info.get("last_test_detail"), zh=zh)
+    status_history = info.get("status_history") or []
+    doctor_fails = info.get("doctor_fails") or []
+
+    lines: list[str] = []
+    if zh:
+        lines.append("## 活动与历史")
+        lines.append("")
+        lines.append(f"- DIRTY（未提交数）: {dirty_text}")
+        lines.append(f"- IDLE（无活动时长）: {idle_text}")
+        lines.append(f"- 返工次数: {rework_count}")
+        lines.append(f"- 最近测试详情: {last_test_text}")
+        if status_history:
+            lines.append("- 状态变化时间线:")
+            for evt in status_history:
+                lines.append(
+                    f"  - {evt['time_local']}  {evt['commit']}  {evt['from']} → {evt['to']}"
+                )
+        else:
+            lines.append("- 状态变化时间线: （无）")
+        if doctor_fails:
+            lines.append("- doctor 异常:")
+            for msg in doctor_fails:
+                lines.append(f"  - {msg}")
+        else:
+            lines.append("- doctor 异常: 无")
+    else:
+        lines.append("## Activity and history")
+        lines.append("")
+        lines.append(f"- DIRTY (uncommitted count): {dirty_text}")
+        lines.append(f"- IDLE: {idle_text}")
+        lines.append(f"- Rework count: {rework_count}")
+        lines.append(f"- Last test detail: {last_test_text}")
+        if status_history:
+            lines.append("- Status history:")
+            for evt in status_history:
+                lines.append(
+                    f"  - {evt['time_local']}  {evt['commit']}  {evt['from']} -> {evt['to']}"
+                )
+        else:
+            lines.append("- Status history: (none)")
+        if doctor_fails:
+            lines.append("- Doctor issues:")
+            for msg in doctor_fails:
+                lines.append(f"  - {msg}")
+        else:
+            lines.append("- Doctor issues: none")
+    return lines
+
+
 def _render_review_zh(info: dict) -> str:
     lines: list[str] = []
     lines.append(f"# 审查：{info['id']} {info['title']}")
     lines.append("")
+    uncommitted_count = len(info["uncommitted"])
+    if uncommitted_count > 0:
+        lines.append(
+            f"> **注意：worktree 里还有 {uncommitted_count} 个未提交文件，审查的是已提交部分。**"
+        )
+        lines.append("")
     lines.append(f"- ID: {info['id']}")
     lines.append(f"- Agent: {info['agent']}")
     lines.append(f"- 状态: {info['status']}")
@@ -53,11 +127,13 @@ def _render_review_zh(info: dict) -> str:
     lines.append("")
     lines.append(f"- 越界 (denied): {len(info['denied'])}")
     lines.append(f"- 越界 (outside): {len(info['outside'])}")
-    lines.append(f"- 未提交改动: {len(info['uncommitted'])}")
+    lines.append(f"- 未提交改动: {uncommitted_count}")
     lines.append("")
     lines.append("## 最近一次测试")
     lines.append("")
     lines.append(f"- {_TEST_ZH.get(info['test'], '— 无记录')}")
+    lines.append("")
+    lines.extend(_activity_history_lines(info, zh=True))
     lines.append("")
     lines.append("## diffstat")
     lines.append("")
@@ -83,6 +159,12 @@ def _render_review_en(info: dict) -> str:
     lines: list[str] = []
     lines.append(f"# Review: {info['id']} {info['title']}")
     lines.append("")
+    uncommitted_count = len(info["uncommitted"])
+    if uncommitted_count > 0:
+        lines.append(
+            f"> **Warning: {uncommitted_count} uncommitted file(s) remain in the worktree; this review covers committed changes only.**"
+        )
+        lines.append("")
     lines.append(f"- ID: {info['id']}")
     lines.append(f"- Agent: {info['agent']}")
     lines.append(f"- Status: {info['status']}")
@@ -93,11 +175,13 @@ def _render_review_en(info: dict) -> str:
     lines.append("")
     lines.append(f"- Violations (denied): {len(info['denied'])}")
     lines.append(f"- Violations (outside): {len(info['outside'])}")
-    lines.append(f"- Uncommitted changes: {len(info['uncommitted'])}")
+    lines.append(f"- Uncommitted changes: {uncommitted_count}")
     lines.append("")
     lines.append("## Last test run")
     lines.append("")
     lines.append(f"- {_TEST_EN.get(info['test'], '— no record')}")
+    lines.append("")
+    lines.extend(_activity_history_lines(info, zh=False))
     lines.append("")
     lines.append("## diffstat")
     lines.append("")
