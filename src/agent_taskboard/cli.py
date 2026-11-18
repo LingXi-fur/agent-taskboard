@@ -925,6 +925,7 @@ def _structured_diffstat(base: str, branch: str, repo_root: Path) -> dict:
         stderr=subprocess.PIPE,
         text=True,
         check=False,
+        env=gitops.git_env(),
     )
     if proc.returncode != 0:
         detail = proc.stderr.strip() or "git diff --numstat failed"
@@ -1708,7 +1709,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("id", help="task id, e.g. T001")
     p_review.add_argument("--out", help="write the review to FILE instead of stdout")
     p_review.add_argument("--lang", choices=["zh", "en"], default="zh", help="review language")
-    p_review.add_argument("--json", action="store_true")
+    p_review.add_argument("--json", action="store_true", help="print a structured JSON review with ready/blockers")
     p_review.set_defaults(func=cmd_review)
 
     p_rework = sub.add_parser("rework", help="send a task back for rework")

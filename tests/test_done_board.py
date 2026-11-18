@@ -278,13 +278,19 @@ class DoneBoardTests(unittest.TestCase):
             result = self._atb(repo, "review", "T001", "--lang", "zh")
             self.assertIn("审查", result.stdout)
 
-    def test_no_push_or_force_delete_in_source(self):
+    def test_push_only_via_gitops_push_and_no_force_delete(self):
+        pkg = ROOT / "src" / "agent_taskboard"
         sources = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (ROOT / "src" / "agent_taskboard").glob("*.py")
+            path.read_text(encoding="utf-8") for path in pkg.glob("*.py")
         )
-        self.assertNotIn('"push"', sources)
+        # Pushing is opt-in (T021): the only git push is gitops.push, it never
+        # forces, and nothing else in the package spells the subcommand.
+        gitops_src = (pkg / "gitops.py").read_text(encoding="utf-8")
+        self.assertEqual(sources.count('"push"'), 1)
+        self.assertIn('_run(["push", remote, ref], cwd=cwd, check=False)', gitops_src)
         self.assertNotIn("'push'", sources)
+        for flag in ("--force", "--force-with-lease", '"-f"', "+refs"):
+            self.assertNotIn(flag, gitops_src.split("def push(", 1)[1].split("\ndef ", 1)[0])
         self.assertNotIn('"-D"', sources)
         self.assertNotIn("'-D'", sources)
         self.assertIn('"branch", "-d"', sources)
