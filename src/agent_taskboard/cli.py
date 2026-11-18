@@ -643,7 +643,12 @@ def _branch_snapshot(cfg: config.Config, repo_root: Path, *, ahead_behind: bool)
 
 
 def _task_board_row(
-    sheet: Sheet, cfg: config.Config, repo_root: Path, branches: dict | None = None
+    sheet: Sheet,
+    cfg: config.Config,
+    repo_root: Path,
+    branches: dict | None = None,
+    *,
+    lang: str = "zh",
 ) -> dict:
     row: dict = {
         "id": sheet.id,
@@ -659,22 +664,51 @@ def _task_board_row(
         "test": checks.last_test_result(repo_root, sheet.id),
         "dirty": None,
         "idle_seconds": None,
+        "ready": None,
+        "blockers": [],
     }
     if sheet.status not in checks.ACTIVE_STATUSES:
         return row
     if not sheet.branch:
         row["missing"] = True
+        if sheet.status == "review":
+            ready, blockers = render.evaluate_readiness(
+                task_id=sheet.id,
+                test_result=row["test"],
+                doctor_fails=[f"[active] {sheet.id} (review) has no branch set"],
+                lang=lang,
+            )
+            row["ready"] = ready
+            row["blockers"] = blockers
         return row
     worktree = checks.resolve_worktree(cfg, sheet)
     entry = branches.get(sheet.branch) if (branches is not None and sheet.branch) else None
     if branches is not None:
         if entry is None or not worktree.exists():
             row["missing"] = True
+            if sheet.status == "review":
+                ready, blockers = render.evaluate_readiness(
+                    task_id=sheet.id,
+                    test_result=row["test"],
+                    doctor_fails=[f"[active] {sheet.id} (review) missing branch or worktree"],
+                    lang=lang,
+                )
+                row["ready"] = ready
+                row["blockers"] = blockers
             return row
         commit_ts = entry["committer_time"]
     else:
         if not gitops.branch_exists(sheet.branch, cwd=repo_root) or not worktree.exists():
             row["missing"] = True
+            if sheet.status == "review":
+                ready, blockers = render.evaluate_readiness(
+                    task_id=sheet.id,
+                    test_result=row["test"],
+                    doctor_fails=[f"[active] {sheet.id} (review) missing branch or worktree"],
+                    lang=lang,
+                )
+                row["ready"] = ready
+                row["blockers"] = blockers
             return row
         commit_ts = None
     try:
@@ -696,8 +730,50 @@ def _task_board_row(
             worktree, sheet.branch, repo_root, uncommitted_paths, commit_ts=commit_ts
         )
         row["idle_seconds"] = max(0, int(time.time() - activity))
+        if sheet.status == "review" or (sheet.status == "doing" and (ahead or 0) > 0):
+            target_conflicts: list[str] = []
+            target_merge_error: str | None = None
+            doctor_fails: list[str] = []
+            if sheet.status == "review":
+                try:
+                    target_conflicts = gitops.merge_tree_conflicts(
+                        cfg.target, sheet.branch, cwd=repo_root
+                    )
+                except gitops.GitError as exc:
+                    target_merge_error = str(exc)
+                try:
+                    actual_branch = gitops.current_branch(cwd=worktree)
+                    if actual_branch != sheet.branch:
+                        doctor_fails.append(
+                            f"[active] {sheet.id} worktree is on {actual_branch!r} instead of {sheet.branch!r}"
+                        )
+                except gitops.GitError as exc:
+                    doctor_fails.append(f"[active] {sheet.id} worktree error: {exc}")
+            ready, blockers = render.evaluate_readiness(
+                task_id=sheet.id,
+                denied=denied,
+                outside=outside,
+                uncommitted=uncommitted_paths,
+                test_result=row["test"],
+                target=cfg.target,
+                target_conflicts=target_conflicts,
+                target_merge_error=target_merge_error,
+                doctor_fails=doctor_fails,
+                lang=lang,
+            )
+            row["ready"] = ready
+            row["blockers"] = blockers
     except (gitops.GitError, OSError):
         row["missing"] = True
+        if sheet.status == "review":
+            ready, blockers = render.evaluate_readiness(
+                task_id=sheet.id,
+                test_result=row["test"],
+                doctor_fails=[f"[active] {sheet.id} (review) branch/worktree error"],
+                lang=lang,
+            )
+            row["ready"] = ready
+            row["blockers"] = blockers
     return row
 
 
@@ -724,6 +800,15 @@ def _status_cells(row: dict) -> tuple[str, ...]:
     violations = str(row["violations"]) if row["violations"] is not None else "—"
     idle = format_idle(row["idle_seconds"]) if row["idle_seconds"] is not None else "—"
     test = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
+    ready_val = row.get("ready")
+    if ready_val is True:
+        ready = "✓"
+    elif ready_val is False:
+        blockers = row.get("blockers") or []
+        first_code = blockers[0]["code"] if blockers else "blocked"
+        ready = f"✗ {first_code}"
+    else:
+        ready = "—"
     return (
         row["id"],
         row["status"],
@@ -736,6 +821,7 @@ def _status_cells(row: dict) -> tuple[str, ...]:
         violations,
         idle,
         test,
+        ready,
     )
 
 
@@ -788,7 +874,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         ))
     else:
         print(_format_upstream(upstream))
-        headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "DIRTY", "VIOL", "IDLE", "TEST")
+        headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "DIRTY", "VIOL", "IDLE", "TEST", "READY")
         print(_render_columns(headers, [_status_cells(row) for row in rows]))
         print("  ".join(f"{status}: {summary[status]}" for status in STATUSES))
     return 0
@@ -1217,7 +1303,10 @@ def cmd_board(args: argparse.Namespace) -> int:
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
     branches = _branch_snapshot(cfg, repo_root, ahead_behind=True)
-    rows = [_task_board_row(sheet, cfg, repo_root, branches=branches) for sheet in sheets]
+    rows = [
+        _task_board_row(sheet, cfg, repo_root, branches=branches, lang=args.lang)
+        for sheet in sheets
+    ]
     for row in rows:
         row["idle_text"] = (
             format_idle(row["idle_seconds"])
@@ -1232,6 +1321,29 @@ def cmd_board(args: argparse.Namespace) -> int:
 
     active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
     conflicts = checks.compute_conflicts(active, cfg, repo_root)
+    if conflicts.get("conflicts"):
+        for row in rows:
+            if row["ready"] is None or row["status"] != "review":
+                continue
+            task_conflicts, _, _ = _conflicts_for(row["id"], conflicts)
+            if not task_conflicts:
+                continue
+            _, extra_blockers = render.evaluate_readiness(
+                task_id=row["id"],
+                test_result="ok",
+                conflicts=task_conflicts,
+                lang=args.lang,
+            )
+            existing_mc = next(
+                (b for b in row["blockers"] if b["code"] == "merge_conflict"),
+                None,
+            )
+            if existing_mc is not None and extra_blockers:
+                sep = "；" if args.lang != "en" else "; "
+                existing_mc["message"] = f"{existing_mc['message']}{sep}{extra_blockers[0]['message']}"
+            else:
+                row["blockers"].extend(extra_blockers)
+            row["ready"] = False
     upstream_text = _format_upstream(
         gitops.upstream_status(cfg.target, cwd=repo_root), lang=args.lang
     )
