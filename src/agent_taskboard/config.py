@@ -66,6 +66,7 @@ def find_repo_root(start: str | os.PathLike | None = None) -> Path:
         proc = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=str(start),
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

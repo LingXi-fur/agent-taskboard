@@ -7,6 +7,7 @@ the codebase never shells out to git directly.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -18,6 +19,20 @@ from .errors import GitError
 _HEX_OID_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
+def git_env() -> dict[str, str]:
+    """Environment for every git call atb makes.
+
+    ``GIT_OPTIONAL_LOCKS=0`` stops read-only commands such as ``git status``
+    from refreshing the index under ``index.lock``.  atb polls agents'
+    worktrees (``status``, ``board``, ``watch``); without this an agent's own
+    ``git commit`` can fail with "Unable to create index.lock".  Real writes
+    (commit, merge, worktree add) still take their locks as usual.
+    """
+    env = os.environ.copy()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return env
+
+
 def _run(
     args: list[str],
     cwd: str | Path | None = None,
@@ -27,6 +42,7 @@ def _run(
     proc = subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd is not None else None,
+        env=git_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

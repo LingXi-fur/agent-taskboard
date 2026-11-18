@@ -17,6 +17,7 @@ def is_branch_merged(branch: str, target: str, cwd: str | Path) -> bool:
     proc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", branch, target],
         cwd=str(cwd),
+        env=gitops.git_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

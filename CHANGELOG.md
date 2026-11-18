@@ -14,6 +14,11 @@ All notable changes to `atb` are documented in this file.
 
 - Packaging metadata follows PEP 639: `license = "MIT"` with `license-files`, no `License ::` classifier, build requirement `setuptools>=77.0`; adds project URLs (GitHub repository, changelog, issues). README links are absolute so they work on PyPI. / 打包元数据按 PEP 639：`license = "MIT"` 加 `license-files`，去掉 `License ::` 分类，构建依赖改为 `setuptools>=77`；新增项目链接（GitHub 仓库、更新日志、问题）。README 链接改为绝对地址，在 PyPI 上也能打开。
 
+### Fixed / 修复
+
+- atb no longer takes git's optional index lock in agents' worktrees: every git call runs with `GIT_OPTIONAL_LOCKS=0`. Before, `atb status`/`board`/`watch` polling a worktree could make the agent's own `git commit` fail with “Unable to create index.lock” (seen on CI as a flaky `test_branch_rewritten`). / atb 不再在 Agent 的 worktree 里拿 git 的可选 index 锁：所有 git 调用都带 `GIT_OPTIONAL_LOCKS=0`。之前 `atb status`/`board`/`watch` 轮询 worktree 时，可能让 Agent 自己的 `git commit` 因 index.lock 失败（CI 上表现为偶发的 `test_branch_rewritten` 失败）。
+- CI builds with `setuptools>=77.0` and runs `twine check --strict` on the built distributions. / CI 改用 `setuptools>=77.0` 构建，并对产物跑 `twine check --strict`。
+
 ## [0.1.3] - 2026-11-18
 
 ### Added / 新增

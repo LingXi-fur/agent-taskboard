@@ -74,8 +74,9 @@ jobs:
 
       - name: Build and install wheel
         run: |
-          python -m pip install "setuptools>=70.1" build
+          python -m pip install "setuptools>=77.0" build twine
           python -m build
+          python -m twine check --strict dist/*
           python -m venv .pkg-venv
           .pkg-venv/bin/python -m pip install dist/*.whl
           EXPECTED=$(python - <<'PY'
