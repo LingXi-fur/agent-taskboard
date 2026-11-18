@@ -287,6 +287,7 @@ tr:last-child td { border-bottom: none; }
 .muted { color: var(--muted); }
 .summary { margin-top: 1rem; color: var(--muted); }
 .board-meta { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; }
+.board-upstream { margin: 0 0 0.5rem; color: var(--accent); font-size: 0.95rem; }
 .board-meta .stall-count-alert { color: var(--bad); font-weight: 700; }
 tr.stall-row { background: rgba(207, 34, 46, 0.08); }
 tr.stall-row td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
@@ -457,6 +458,7 @@ def render_board_html(
     stall_minutes: int = 120,
     generated_at: str | None = None,
     lang: str = "zh",
+    upstream_text: str | None = None,
 ) -> str:
     """Render a self-contained static HTML board."""
     i18n = _BOARD_I18N.get(lang, _BOARD_I18N["zh"])
@@ -472,6 +474,11 @@ def render_board_html(
     )
     if generated_at is None:
         generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    upstream_html = (
+        f'<p class="board-upstream">{_esc(upstream_text)}</p>\n'
+        if upstream_text
+        else ""
+    )
     stall_summary_cls = "stall-count-alert" if stall_count > 0 else ""
     stall_summary_text = f"{_esc(i18n['stall_summary'])}{stall_count}"
     stall_summary_html = (
@@ -518,6 +525,7 @@ def render_board_html(
         "</head>\n"
         "<body>\n"
         f"<h1>{_esc(i18n['heading'])}</h1>\n"
+        f"{upstream_html}"
         f"{top_summary_html}\n"
         f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>\n"
         f'<p class="summary">{summary_text}</p>\n'
