@@ -276,12 +276,43 @@ def _check_orphan_worktrees(
     return _check_entry("orphans", "OK", f"no orphan worktrees under {wt_root}")
 
 
+def _check_upstream(cfg: config.Config | None, repo_root: Path) -> dict[str, Any]:
+    """WARN when the target has unpushed commits; INFO when it has no upstream."""
+    if cfg is None:
+        return _check_entry(
+            "upstream",
+            "INFO",
+            "skipped upstream check because config could not be loaded",
+            "fix config first",
+        )
+    info = gitops.upstream_status(cfg.target, cwd=repo_root)
+    if info["upstream"] is None:
+        return _check_entry(
+            "upstream",
+            "INFO",
+            f"target branch {cfg.target!r} has no upstream (push is optional)",
+            f"git branch --set-upstream-to=origin/{cfg.target} {cfg.target}",
+        )
+    if info["ahead"] and info["ahead"] > 0:
+        return _check_entry(
+            "upstream",
+            "WARN",
+            f"{info['ahead']} commit(s) on {cfg.target!r} not pushed "
+            f"to {info['upstream']!r}",
+            "git push",
+        )
+    return _check_entry(
+        "upstream", "OK", f"{cfg.target!r} is up to date with {info['upstream']!r}"
+    )
+
+
 def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
     """Run all read-only health checks and return ``(payload, exit_code)``."""
     git_item = _check_git_version()
     cfg_item, cfg = _check_config(repo_root)
     sheets_item, valid_sheets = _check_sheets(repo_root)
     active_item = _check_active_tasks(valid_sheets, cfg, repo_root)
+    upstream_item = _check_upstream(cfg, repo_root)
     leftover_item = _check_gc_leftovers(valid_sheets, cfg, repo_root)
     orphan_item = _check_orphan_worktrees(valid_sheets, cfg, repo_root)
 
@@ -290,6 +321,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
         cfg_item,
         sheets_item,
         active_item,
+        upstream_item,
         leftover_item,
         orphan_item,
     ]

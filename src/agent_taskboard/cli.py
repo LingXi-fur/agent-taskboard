@@ -739,6 +739,33 @@ def _status_cells(row: dict) -> tuple[str, ...]:
     )
 
 
+def _format_upstream(info: dict, lang: str = "en") -> str:
+    """One-line summary of the target branch vs its upstream (local refs only)."""
+    target = info["target"]
+    ahead, behind = info["ahead"], info["behind"]
+    if lang == "zh":
+        if info["upstream"] is None:
+            return "上游：无上游"
+        parts: list[str] = []
+        if ahead:
+            parts.append(f"{ahead} 个提交未推送")
+        if behind:
+            parts.append(f"落后 {behind} 个")
+        if not parts:
+            parts.append("已同步")
+        return "上游：" + "，".join(parts)
+    if info["upstream"] is None:
+        return f"{target}: no upstream"
+    parts = []
+    if ahead:
+        parts.append(f"{ahead} commits not pushed")
+    if behind:
+        parts.append(f"{behind} behind")
+    if not parts:
+        parts.append("up to date")
+    return f"{target}: " + ", ".join(parts)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
@@ -746,6 +773,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     sheets = _load_tasks(repo_root)
     branches = _branch_snapshot(cfg, repo_root, ahead_behind=True)
     rows = [_task_board_row(sheet, cfg, repo_root, branches=branches) for sheet in sheets]
+    upstream = gitops.upstream_status(cfg.target, cwd=repo_root)
 
     summary = {status: 0 for status in STATUSES}
     for row in rows:
@@ -753,8 +781,13 @@ def cmd_status(args: argparse.Namespace) -> int:
             summary[row["status"]] += 1
 
     if args.json:
-        print(json.dumps({"tasks": rows, "summary": summary}, ensure_ascii=False, indent=2))
+        print(json.dumps(
+            # keep the top-level keys stable; upstream rides under summary
+            {"tasks": rows, "summary": {**summary, "upstream": upstream}},
+            ensure_ascii=False, indent=2,
+        ))
     else:
+        print(_format_upstream(upstream))
         headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "DIRTY", "VIOL", "IDLE", "TEST")
         print(_render_columns(headers, [_status_cells(row) for row in rows]))
         print("  ".join(f"{status}: {summary[status]}" for status in STATUSES))
@@ -1072,6 +1105,8 @@ def cmd_done(args: argparse.Namespace) -> int:
 
     if args.clean and not args.merge:
         raise AtbError("--clean can only be used together with --merge")
+    if args.push and not args.merge:
+        raise AtbError("--push can only be used together with --merge")
 
     if sheet.status == "review":
         pass
@@ -1131,6 +1166,30 @@ def cmd_done(args: argparse.Namespace) -> int:
             f"merge of {sheet.branch!r} into {cfg.target!r} failed (conflict?); aborted"
         )
 
+    # Push only when explicitly requested, or by config default unless --no-push.
+    # Never forces; a rejected push keeps the merge and tells the user what to do.
+    push_enabled = args.push or (
+        not args.no_push and bool(cfg.extra.get("push_after_done", False))
+    )
+    pushed = False
+    if push_enabled:
+        upstream = gitops.upstream_name(cfg.target, cwd=repo_root)
+        remote = upstream.split("/", 1)[0] if upstream else "origin"
+        if not gitops.remote_exists(remote, cwd=repo_root):
+            raise AtbError(
+                f"cannot push {cfg.target!r}: remote {remote!r} does not exist; "
+                "merge kept — push manually"
+            )
+        push_proc = gitops.push(remote, cfg.target, cwd=repo_root)
+        if push_proc.returncode != 0:
+            detail = push_proc.stderr.strip() or "push rejected"
+            raise CheckError(
+                f"push of {cfg.target!r} to {remote!r} failed; merge kept — "
+                f"run 'git pull --rebase' then push again, or handle manually "
+                f"({detail})"
+            )
+        pushed = True
+
     if args.clean:
         worktree = checks.resolve_worktree(cfg, sheet)
         gitops.worktree_remove(worktree, cwd=repo_root)  # refuses when dirty
@@ -1138,7 +1197,10 @@ def cmd_done(args: argparse.Namespace) -> int:
 
     _write_status(repo_root, sheet, "done")
     print(f"merged {sheet.branch!r} into {cfg.target} with --no-ff")
-    print(f"marked {sheet.id} done; task sheet updated — commit it yourself (never pushed)")
+    if pushed:
+        print(f"pushed {cfg.target!r}; marked {sheet.id} done")
+    else:
+        print(f"marked {sheet.id} done; task sheet updated — commit it yourself (not pushed)")
     return 0
 
 
@@ -1169,9 +1231,13 @@ def cmd_board(args: argparse.Namespace) -> int:
 
     active = [s for s in sheets if s.status in checks.ACTIVE_STATUSES]
     conflicts = checks.compute_conflicts(active, cfg, repo_root)
+    upstream_text = _format_upstream(
+        gitops.upstream_status(cfg.target, cwd=repo_root), lang=args.lang
+    )
 
     html_text = render.render_board_html(
-        rows, summary, conflicts, stall_minutes=args.stall, lang=args.lang
+        rows, summary, conflicts, stall_minutes=args.stall, lang=args.lang,
+        upstream_text=upstream_text,
     )
     Path(args.html).write_text(html_text, encoding="utf-8")
     print(f"board written to {args.html}")
@@ -1655,6 +1721,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_done.add_argument("--merge", action="store_true", help="merge the branch into target with --no-ff")
     p_done.add_argument("--clean", action="store_true", help="remove worktree and branch after merging (needs --merge)")
     p_done.add_argument("--force", action="store_true", help="allow finishing a 'doing' task (never skips scope checks)")
+    push_group = p_done.add_mutually_exclusive_group()
+    push_group.add_argument("--push", action="store_true", help="push the target branch after merging (needs --merge)")
+    push_group.add_argument("--no-push", action="store_true", help="do not push even if push_after_done is enabled")
     p_done.set_defaults(func=cmd_done)
 
     p_board = sub.add_parser("board", help="write a standalone static HTML board")

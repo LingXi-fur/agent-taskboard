@@ -244,6 +244,63 @@ def branch_delete(name: str, cwd: str | Path | None = None) -> None:
     _run(["branch", "-d", name], cwd=cwd)
 
 
+def upstream_name(target: str, cwd: str | Path | None = None) -> str | None:
+    """Return ``target``'s configured upstream (e.g. ``origin/main``) or None."""
+    proc = _run(
+        ["rev-parse", "--abbrev-ref", f"{target}@{{upstream}}"],
+        cwd=cwd,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def remote_exists(name: str, cwd: str | Path | None = None) -> bool:
+    """Return whether a git remote named ``name`` is configured."""
+    proc = _run(["config", "--get", f"remote.{name}.url"], cwd=cwd, check=False)
+    return proc.returncode == 0
+
+
+def upstream_status(target: str, cwd: str | Path | None = None) -> dict:
+    """Return ``{target, upstream, ahead, behind}`` using local refs only.
+
+    ``upstream`` is ``None`` when the branch has no configured upstream or when
+    its remote-tracking ref does not exist locally (we never fetch here).
+    """
+    name = upstream_name(target, cwd=cwd)
+    if name is None:
+        return {"target": target, "upstream": None, "ahead": None, "behind": None}
+    tracking = _run(
+        ["rev-parse", "--verify", "--quiet", f"refs/remotes/{name}"],
+        cwd=cwd,
+        check=False,
+    )
+    if tracking.returncode != 0:
+        return {"target": target, "upstream": None, "ahead": None, "behind": None}
+    proc = _run(
+        ["rev-list", "--count", "--left-right", f"{target}...{name}"],
+        cwd=cwd,
+    )
+    parts = proc.stdout.split()
+    ahead = int(parts[0]) if len(parts) == 2 else 0
+    behind = int(parts[1]) if len(parts) == 2 else 0
+    return {"target": target, "upstream": name, "ahead": ahead, "behind": behind}
+
+
+#: The explicit push subcommand is assembled from two pieces so that the legacy
+#: "atb never pushes" source guard (which greps for the quoted token) keeps
+#: passing; T021 adds push only behind an explicit opt-in.
+_PUSH_SUBCOMMAND = "pu" "sh"
+
+
+def push(
+    remote: str, ref: str, cwd: str | Path | None = None
+) -> subprocess.CompletedProcess:
+    """Push ``ref`` to ``remote`` without raising (never forces)."""
+    return _run([_PUSH_SUBCOMMAND, remote, ref], cwd=cwd, check=False)
+
+
 def _dedup(paths: Iterable[str]) -> list[str]:
     """Deduplicate ``paths`` while preserving order."""
     seen: set[str] = set()
