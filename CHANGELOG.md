@@ -7,6 +7,10 @@ All notable changes to `atb` are documented in this file.
 
 ### Added / 新增
 
+- **`atb doctor [--json]`** — one-shot read-only health check: git version (≥ 2.38 for `merge-tree --write-tree`), config and target branch, worktree root writability, every task sheet (parse, id/filename, depends), active tasks' branch and worktree, leftovers of `done`/`dropped` tasks (suggests `atb gc`) and orphan worktrees; exits 1 on any FAIL. / 新增 `atb doctor`：一次性只读体检（git 版本、配置与目标分支、worktree 根目录可写、任务单解析/编号/依赖、活跃任务的分支和 worktree、收尾残留、孤儿 worktree），有 FAIL 时退出 1。
+- **`atb log ID [--json] [--verbose]`** — one task's history in time order: status changes from the sheet's git history, rework notes, test runs (output only with `--verbose`, last 5 lines) and the merge into the target branch, found even after the task branch was deleted. / 新增 `atb log`：按时间列出单个任务的状态变化、返工、测试运行（`--verbose` 才显示最后 5 行输出）和合并记录，分支删除后也能找到合并。
+- `atb board --html FILE --lang zh|en` (default `zh`): every label of the board follows the language, and `<html lang>` matches. / `atb board --html` 新增 `--lang zh|en`（默认中文），看板全部文案和 `<html lang>` 跟随语言。
+
 - `atb watch --stall MINUTES` — alert when a `doing`/`rework` task has been idle for at least MINUTES; tasks already stalled at start are reported immediately, each task at most once per run, and the message shows the actual idle time (`T009 已 10h 无活动（阈值 30 分钟，未提交 46 个文件）`). / `atb watch --stall MINUTES`：`doing`/`rework` 任务空闲达到阈值时告警；启动时已卡住立即报，每个任务每次运行只报一次，提示里显示实际空闲时长。
 - `atb watch --activity` — alert when a task's uncommitted file count changes (an agent just started editing). / `atb watch --activity`：任务未提交文件数变化时告警（代表 Agent 开工了）。
 - `atb watch --json` emits structured `changes` (`id`/`kind`/`from`/`to`/`text`). Recommended coordinator usage: `atb watch --stall 30 --activity --timeout 3600`. / `atb watch --json` 输出结构化 `changes`；协调者推荐用法 `atb watch --stall 30 --activity --timeout 3600`。
@@ -14,6 +18,7 @@ All notable changes to `atb` are documented in this file.
 
 ### Fixed / 修复
 
+- Unreadable task sheets (invalid UTF-8, permission or I/O errors) no longer crash `atb`: single-task commands report the file and reason, listing commands skip the sheet, `atb watch` treats it as a parse failure, `atb doctor` reports it as FAIL, and `atb log` tolerates invalid bytes in a runs file. / 无法读取的任务单（非 UTF-8、权限或 IO 错误）不再让 `atb` 崩溃：单任务命令报出文件和原因，列表类命令跳过，`atb watch` 视为解析失败，`atb doctor` 判为 FAIL，`atb log` 能容忍测试记录里的坏字节。
 - `atb watch` no longer crashes or misreports when a task sheet is mid-write (it keeps the last known state, retries, and reports only after 3 consecutive parse failures; a sheet that recovers is not re-reported as a new task), when a branch is deleted (`分支已删除`), or when a branch is rewritten (`分支被改写`). / `atb watch` 在任务单写到一半时保留上次状态并重试，连续 3 次解析失败才报告，恢复后不会误报"新增任务"；分支被删除、被改写时分别如实报告。
 - `IDLE` in `atb status` and `atb watch --stall` also counts the worktree's creation, so a task that was just started is not reported idle since its (possibly hours-old) base commit. / `atb status` 的 `IDLE` 和 `atb watch --stall` 把 worktree 创建时间也算作活动，刚开工的任务不会因为基线提交很旧而被判为空闲。
 - `atb gc --apply` now reports what actually happened: each task line says `removed worktree and branch`, `removed worktree; branch kept` or `FAILED`, followed by a `removed N, skipped N, failed N` summary; `--json` adds a per-candidate `result` and a `summary` object. Previously the applied run still printed the dry-run wording `ready to remove`. / `atb gc --apply` 现在输出实际结果：每行写明已删除 worktree 和分支、只删 worktree 保留分支或失败，末尾汇总删除/跳过/失败数；`--json` 新增每项的 `result` 和 `summary`。此前执行后仍显示预览用语 `ready to remove`。
