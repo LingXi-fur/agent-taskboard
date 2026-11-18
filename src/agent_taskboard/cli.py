@@ -121,6 +121,8 @@ def _load_task(repo_root: Path, task_id: str) -> Sheet:
         return parse(path.read_text(encoding="utf-8"))
     except SheetError as exc:
         raise SheetError(f"{path.name}: {exc}") from exc
+    except (UnicodeDecodeError, OSError) as exc:
+        raise SheetError(f"{path.name}: cannot read task sheet ({exc})") from exc
 
 
 def _load_tasks(repo_root: Path, status: str | None = None) -> list[Sheet]:
@@ -131,8 +133,8 @@ def _load_tasks(repo_root: Path, status: str | None = None) -> list[Sheet]:
     for path in sorted(tasks_dir.glob("*.md")):
         try:
             sheet = parse(path.read_text(encoding="utf-8"))
-        except AtbError:
-            continue  # skip sheets that do not parse
+        except (AtbError, UnicodeDecodeError, OSError):
+            continue  # skip sheets that cannot be read or do not parse
         if status is not None and sheet.status != status:
             continue
         sheets.append(sheet)
@@ -1176,7 +1178,7 @@ def _watch_scan(repo_root: Path, cfg) -> tuple[dict[str, dict], set[str]]:
         task_id = path.stem
         try:
             sheet = parse(path.read_text(encoding="utf-8"))
-        except AtbError:
+        except (AtbError, UnicodeDecodeError, OSError):
             failed.add(task_id)
             continue
         tip = None
