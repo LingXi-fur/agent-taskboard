@@ -1,6 +1,6 @@
 # agent-taskboard (`atb`)
 
-> [中文文档](https://github.com/LingXi-fur/agent-taskboard/blob/main/README.zh-CN.md) · Status: pre-alpha, under active development. See [DESIGN.md](https://github.com/LingXi-fur/agent-taskboard/blob/main/DESIGN.md).
+> [中文文档](https://github.com/LingXi-fur/agent-taskboard/blob/main/README.zh-CN.md) · [Workflow Guide](https://github.com/LingXi-fur/agent-taskboard/blob/main/docs/guide.md) · Status: pre-alpha, under active development. See [DESIGN.md](https://github.com/LingXi-fur/agent-taskboard/blob/main/DESIGN.md).
 
 Run several AI coding agents (Claude Code, Codex, OpenCode, Gemini CLI, ...) in parallel without losing control: write a task sheet, hand it off in its own git worktree, check scope and tests, catch cross-task conflicts before merging, and review against an acceptance checklist.
 
@@ -28,9 +28,17 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 Requires **Python 3.11+** and **Git 2.38+** (for `git merge-tree --write-tree`). Zero third-party Python dependencies.
 
-Install from source (needs network access once, to fetch the build dependency `setuptools>=77.0`):
+Install directly from GitHub with `pipx`:
 
 ```bash
+pipx install git+https://github.com/LingXi-fur/agent-taskboard
+```
+
+Or install from source (needs network access once to fetch the build dependency `setuptools>=77.0`):
+
+```bash
+git clone https://github.com/LingXi-fur/agent-taskboard.git
+cd agent-taskboard
 pip install -e .
 ```
 
@@ -58,16 +66,15 @@ To see a complete end-to-end demo in a temporary git repository (no changes made
 bash examples/walkthrough.sh
 ```
 
-To preview the static HTML board, generate it in any repository that has task
-sheets and open the file in a browser:
+To preview the static HTML board (supports `--lang zh|en`, defaults to `zh`, and `--stall MIN`, defaults to `120`), generate it in any repository that has task sheets and open the file in a browser:
 
 ```bash
-atb board --html board.html
+atb board --html board.html --lang en --stall 120
 ```
 
 Then double-click `board.html`, or run `python3 -m http.server` in that
 directory and open the printed URL. The board is a single self-contained file
-(inline CSS, dark-first) and loads no external resources.
+(inline CSS, dark-first, shows `Dirty` / `Idle` columns and highlights stalled tasks) and loads no external resources.
 
 ## Task Sheet Format
 
@@ -117,10 +124,13 @@ created = 2026-11-14T08:00:00Z
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope-check committed & uncommitted changes; optionally run tests in a throwaway isolated `HOME` | Implemented |
 | `atb status [--json]` | Show board: status, branch, ahead/behind, files, dirty (uncommitted), violations, idle time, last test | Implemented |
 | `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
-| `atb review ID [--out FILE] [--lang zh\|en]` | Generate a Markdown review sheet combining checks, tests, diffstat, and checklist (Chinese/English) | Implemented |
+| `atb review ID [--out FILE] [--lang zh\|en]` | Generate a Markdown review sheet combining checks, tests, activity & history, doctor hints, diffstat, conflicts, and checklist (Chinese/English) | Implemented |
 | `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
 | `atb done ID [--merge] [--clean] [--force]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree and branch | Implemented |
-| `atb board --html out.html` | Export a standalone static HTML task board | Implemented |
+| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches (`git branch -d` only) for `done`/`dropped` tasks | Implemented |
+| `atb doctor [--json]` | One-shot read-only health check: git version, config, task sheets, active worktrees, leftovers, and orphans | Implemented |
+| `atb log ID [--json] [--verbose]` | Show chronological per-task history: status changes, rework notes, test runs, and merges | Implemented |
+| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | Export a standalone static HTML board with `Dirty`/`Idle` columns, stall highlighting, and zh/en localization (default `zh`) | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until a task status/commit/new-sheet change, a stall, or an activity change, then print a summary and exit (exit 3 on timeout) | Implemented |
 

@@ -1,86 +1,304 @@
 # Multi-agent workflow guide
 
-`atb` (agent-taskboard) is built for one main session coordinating several AI coding agents in parallel. This guide describes the workflow that the repository itself uses: the main session writes task sheets, opens isolated worktrees, reviews changes, and merges; agent windows work only inside the handoff text they receive.
+`atb` (agent-taskboard) is built for one coordinator session managing several AI coding agents in parallel. This guide walks through a coordinator's real day from task creation to post-merge cleanup and history audit.
 
-See also the [README](../README.md) for installation and the [design notes](../DESIGN.md) for the data model.
+See also [README.md](../README.md) for installation, [guide.zh-CN.md](guide.zh-CN.md) for Chinese, [DESIGN.md](../DESIGN.md) for the data model, and [walkthrough.sh](../examples/walkthrough.sh) for an executable demo.
 
 ## Roles
 
 | Role | Responsibilities |
 |---|---|
-| Main session | Writes and scopes task sheets, runs `atb start`, forwards `atb prompt` to an agent, reviews, requests rework, merges, and commits the task-sheet status changes. |
-| Agent window | Works in the absolute worktree path from the handoff, respects `allow` / `deny`, runs the configured tests, and reports changed files, test results, branch name, and problems. It never pushes or merges. |
+| Coordinator (main session) | Writes and scopes task sheets, runs `atb start`, forwards `atb prompt` / `atb dispatch`, watches progress, reviews, requests rework, merges, cleans up with `atb gc`, and commits task-sheet state changes. |
+| Agent window | Works inside the absolute worktree path from the handoff, obeys `allow` / `deny`, runs the configured tests, commits on its task branch, and reports changed files, test results, branch name, and problems. Never pushes or merges. |
 
-A task sheet is the contract. The main session should put the goal, the allowed and denied paths, the acceptance checklist, and any dependency in the sheet before starting work.
+---
 
-## One task, end to end
+## A coordinator's day, step by step
 
-### 1. Create the task
+All example outputs below were captured by running the commands in a temporary repository (`demo-repo`, via `examples/walkthrough.sh` and a temporary watch/review verification script).
 
-```bash
-atb new "Add a quota command" \
-  --agent opencode \
-  --allow "src/pkg/quota.py" \
-  --allow "tests/test_quota.py" \
-  --deny "src/pkg/readers.py" \
-  --deny "CHANGELOG.md"
-```
-
-`--allow` and `--deny` are repeatable globs. Deny wins over allow. An empty allow list means “no allow restriction”, but deny still applies. Fill in the acceptance section of the generated `.taskboard/tasks/TNNN.md` before starting.
-
-### 2. Start the worktree
+### 1. Write task sheets (`atb new`)
 
 ```bash
-atb start T012
+atb new "Update greeting message" --agent claude --allow "src/app.py" --allow "tests/**" --deny "src/core.py"
+atb new "Localize greeting" --agent opencode --allow "src/app.py" --allow "tests/**" --deny "src/core.py"
 ```
 
-`start` accepts only `todo` or `rework`. It checks `depends`, records the baseline commit, creates `worktree_root/<ID>` on the task branch, and changes the sheet to `doing`. For `rework`, it reuses the existing worktree and branch. `--base REV` chooses an explicit baseline; `--force` skips an unmet dependency check but prints a warning. A `todo` task with an existing branch or worktree path is rejected.
+Real output:
 
-### 3. Generate and forward the handoff
+```text
+/tmp/.../demo-repo/.taskboard/tasks/T001.md
+/tmp/.../demo-repo/.taskboard/tasks/T002.md
+```
+
+`--allow` and `--deny` are repeatable globs (`deny` always wins over `allow`; an empty `allow` list imposes no allow restriction, though `deny` still applies). Fill in the `## 验收` / acceptance checkboxes in `.taskboard/tasks/TNNN.md` before starting.
+
+### 2. Start isolated worktrees (`atb start`)
 
 ```bash
-atb prompt T012 --lang zh
+atb start T001
+atb start T002
 ```
 
-Give the complete output to the agent. It contains the absolute worktree path, branch, allow/deny lists, “do not push / do not merge” rules, the test command, the reporting format, and the task body. If the sheet has a rework section, it appears first. `--json` returns `text`, `worktree`, and `branch` for scripting.
+Real output:
 
-### 4. Agent work
+```text
+started T001: branch=claude/update-greeting-message
+worktree: /tmp/.../demo-repo-tasks/T001
+base: 59af091421ef5cc50735a097e5453aa2dc994d25
+status -> doing
+task sheet updated (/tmp/.../demo-repo/.taskboard/tasks/T001.md); commit it yourself (not auto-committed)
+started T002: branch=opencode/localize-greeting
+worktree: /tmp/.../demo-repo-tasks/T002
+base: 59af091421ef5cc50735a097e5453aa2dc994d25
+status -> doing
+task sheet updated (/tmp/.../demo-repo/.taskboard/tasks/T002.md); commit it yourself (not auto-committed)
+```
 
-The agent edits only allowed paths, commits on its task branch, and runs the task test command. It must not push, merge, rewrite history, or touch the main worktree.
+`start` only accepts `todo` or `rework`. It validates `depends`, records the baseline commit, creates `worktree_root/<ID>`, and flips the sheet status to `doing` (`rework` reuses the existing worktree and branch). Commit `.taskboard/tasks/` changes on the main branch when convenient so `atb log` records status timestamps cleanly.
 
-### 5. Check the result
+### 3. Generate and forward handoffs (`atb prompt` / `atb dispatch`)
 
 ```bash
-atb check T012 --test
+atb prompt T001 --lang en
+atb dispatch
 ```
 
-`check` compares the committed diff (`base...branch`) plus uncommitted files in the worktree against `allow` / `deny`. It reports ahead/behind counts, changed files, denied and outside paths, and uncommitted files. Scope violations exit 1. Uncommitted changes are only a warning by default; `--strict` also exits 1. `--test` runs the task's test command in the worktree, appends the result to `.taskboard/runs/T012.jsonl`, and exits 1 on failure.
+Real `atb dispatch` output:
 
-### 6. Review
+```markdown
+## 项目：demo-repo
+
+### claude
+
+| ID | 标题 | Agent | 状态 | 发这句话 |
+|---|---|---|---|---|
+| T001 | Update greeting message | claude | doing | 请在 /tmp/.../demo-repo 运行 PYTHONPATH=src python3 -m agent_taskboard prompt T001，按交接文本执行。全程中文，完成后不要 push、不要合并。 |
+
+### opencode
+
+| ID | 标题 | Agent | 状态 | 发这句话 |
+|---|---|---|---|---|
+| T002 | Localize greeting | opencode | doing | 请在 /tmp/.../demo-repo 运行 PYTHONPATH=src python3 -m agent_taskboard prompt T002，按交接文本执行。全程中文，完成后不要 push、不要合并。 |
+```
+
+`atb prompt` includes the absolute worktree path, branch, `allow`/`deny` scope, “do not push / do not merge” rules, test command, report format, and task body (hoisting `## 返工` / rework notes to the very top when present). `atb dispatch --lang zh|en` builds a per-window forwarding table for active tasks.
+
+### 4. Watch progress (`atb watch`, `atb status`, `atb board`)
+
+While agent windows are working, run the recommended coordinator watcher so you catch both newly started edits and quiet stalls:
 
 ```bash
-atb review T012 --out review-T012.md --lang zh
+atb watch --stall 30 --activity --timeout 3600
 ```
 
-The review sheet combines scope checks, the last test run, diffstat, conflicts/drift, and the acceptance checklist. `review` changes `doing` to `review`; it does not change a `rework` sheet. If the review is not acceptable, use `rework`; if it is acceptable, use `done`.
+Real outputs captured in a temporary repository when uncommitted edits start (`--activity`) and when an active task goes silent past the threshold (`--stall`):
 
-### 7. Rework or finish
+```text
+T001 未提交改动 0 → 2
+T001 已 45m 无活动（阈值 30 分钟，未提交 2 个文件）
+```
+
+- `--activity` fires when uncommitted file counts change so you know an agent started editing.
+- `--stall 30` fires as soon as a `doing`/`rework` task reaches 30 minutes without a new commit or recent uncommitted-file mtime (tasks already past the threshold at start time are reported immediately, once per run).
+- `atb watch` exits 0 on change/alert and 3 on timeout (`--timeout 3600`).
+
+For an instant snapshot across all tasks or an HTML overview:
 
 ```bash
-# Not acceptable
-atb rework T012 --note "Fix the cache path before retrying"
-atb start T012          # rework -> doing, reuses the worktree
-# agent appends commits, then:
-atb check T012 --test
-atb review T012
-
-# Acceptable
-atb done T012 --merge --clean
+atb status
+atb board --html board.html --lang en --stall 120
 ```
 
-`rework` accepts `doing`, `review`, or `rework` and appends a timestamped note to the sheet's rework section. `--note @file` reads a longer review from a file. Because `review` in 0.1.0 only flips `doing`, a rework task must go through `atb start` before `review` and `done`.
+Real `atb status` output:
 
-`done` accepts `review`; `--force` also accepts `doing`, but it never skips scope, uncommitted-file, or last-test blockers. Without `--merge`, it only marks the task done. `--merge` must run from the main worktree on the configured target branch, uses `git merge --no-ff`, and aborts on conflicts. `--clean` is valid only with `--merge` and removes the worktree and branch with safe removal (`git branch -d`, never `-D`). Nothing is ever pushed.
+```text
+ID    STATUS  AGENT     TITLE                    BRANCH                          AHEAD/BEHIND  FILES  DIRTY  VIOL  IDLE  TEST
+T001  doing   claude    Update greeting message  claude/update-greeting-message  +1/-1         2      0      1     0s    —   
+T002  doing   opencode  Localize greeting        opencode/localize-greeting      +1/-1         2      0      0     0s    ✓   
+todo: 0  doing: 2  review: 0  rework: 0  done: 0  dropped: 0
+```
+
+### 5. Agent reports back: check scope and tests (`atb check` & `atb conflicts`)
+
+```bash
+atb check T001
+atb check T002 --test
+atb conflicts
+```
+
+Real outputs:
+
+```text
+# atb check T001 (scope violation, exit 1)
+ahead: 1
+behind: 0
+changed files: 2
+denied:
+  - src/core.py
+outside:
+  (none)
+uncommitted:
+  (none)
+
+# atb check T002 --test (exit 0)
+ahead: 1
+behind: 0
+changed files: 2
+denied:
+  (none)
+outside:
+  (none)
+uncommitted:
+  (none)
+test: exit 0 in 0.061s
+
+# atb conflicts (exit 1 on real merge conflict)
+真实冲突:
+  T001 <-> T002: src/app.py
+同文件但能自动合并:
+  (none)
+基线漂移:
+  (none)
+无法判断:
+  (none)
+```
+
+Add `--isolate-home` to `atb check --test` to run tests with a throwaway `HOME` and detect files written to `$HOME`.
+
+### 6. Review and read the "Activity and history" section (`atb review`)
+
+```bash
+atb review T001 --lang en
+```
+
+Real output (with 2 uncommitted files left in the worktree and a recorded test run):
+
+```markdown
+# Review: T001 Update greeting
+
+> **Warning: 2 uncommitted file(s) remain in the worktree; this review covers committed changes only.**
+
+- ID: T001
+- Agent: claude
+- Status: review
+- Branch: claude/update-greeting
+- Base: 60be446044211c788c7a098343f5049e27f834f4
+
+## Check results
+
+- Violations (denied): 0
+- Violations (outside): 1
+- Uncommitted changes: 2
+
+## Last test run
+
+- ✓ passed
+
+## Activity and history
+
+- DIRTY (uncommitted count): 2
+- IDLE: 0s
+- Rework count: 0
+- Last test detail: 2026-11-18 13:39, exit 0 (0.1s)
+- Status history:
+  - 2026-11-18 13:39  ddf865c  todo -> doing
+  - 2026-11-18 13:39  uncommitted  doing -> review
+- Doctor issues: none
+```
+
+How to read the enriched review sheet:
+- **Top uncommitted warning**: appears whenever `uncommitted > 0`, reminding you that `diffstat` and branch commits do not yet include those files in the worktree.
+- **`DIRTY` & `IDLE`**: live uncommitted count and time since last commit/uncommitted edit, matching `atb status`.
+- **`Rework count`**: how many rework notes have been appended so far (`## 返工`).
+- **`Last test detail`**: exact timestamp, exit code, and duration from `.taskboard/runs/<ID>.jsonl`.
+- **`Status history`**: up to the latest 10 status transitions recorded for this sheet.
+- **`Doctor issues`**: any `doctor` `FAIL` specifically affecting this task (for example, a missing worktree or mismatched worktree branch), without dumping unrelated repo checks.
+
+### 7. Request rework or finish & merge (`atb rework` / `atb done`)
+
+```bash
+# Needs fixes
+atb rework T001 --note "Revert changes to src/core.py and resolve conflict in src/app.py."
+
+# Ready to merge
+atb done T002 --merge
+```
+
+Real output:
+
+```text
+rework T001: note appended
+merged 'opencode/localize-greeting' into main with --no-ff
+marked T002 done; task sheet updated — commit it yourself (never pushed)
+```
+
+`atb done` refuses if there are scope violations, uncommitted files, or no passing last test record. Pass `--clean` together with `--merge` to remove the worktree and branch immediately on merge.
+
+### 8. Clean up leftover worktrees and branches (`atb gc`)
+
+Tasks merged without `--clean`, merged manually, or marked `dropped` leave worktrees and local branches behind. `atb gc` inspects `done` and `dropped` tasks only (`todo` / `doing` / `review` / `rework` are never touched).
+
+```bash
+atb gc            # dry-run preview first (default)
+atb gc --apply    # remove eligible clean & merged items
+```
+
+Real output:
+
+```text
+T002 [done] -> remove: ready to remove worktree and branch (worktree=/tmp/.../demo-repo-tasks/T002, branch=opencode/localize-greeting)
+dry-run only; re-run with --apply to remove eligible items
+
+T002 [done] removed worktree and branch (worktree=/tmp/.../demo-repo-tasks/T002, branch=opencode/localize-greeting)
+removed 1, skipped 0, failed 0
+```
+
+- **Dry-run by default**: `atb gc` only prints planned actions (`remove`, `skip: dirty`, `skip: unmerged`, `skip: missing`).
+- **Never force-deletes branches**: `atb gc --apply` calls `git worktree remove` (refuses dirty worktrees) and `git branch -d` (never `-D`). For `dropped` tasks with unmerged commits, `--include-unmerged` still keeps the branch and only removes a clean worktree so unmerged work cannot be lost silently.
+
+### 9. One-shot environment health check (`atb doctor`)
+
+```bash
+atb doctor
+```
+
+Real output (before running `atb gc --apply` in the walkthrough):
+
+```text
+OK    git: git 2.54 (>= 2.38)
+OK    config: config loaded (target=main, worktree_root=/tmp/.../demo-repo-tasks)
+OK    sheets: 2 task sheet(s) valid
+OK    active: all 1 active task(s) healthy
+WARN  leftovers: 1 done/dropped task(s) still have worktree or branch: T002 (hint: run: atb gc)
+OK    orphans: no orphan worktrees under /tmp/.../demo-repo-tasks
+```
+
+`atb doctor` is strictly read-only and checks six areas: git ≥ 2.38, config & writability, task-sheet parsing/dependencies, active worktrees/branches, `done`/`dropped` leftovers (reusing `gc`), and orphan worktrees. It exits 1 when any check is `FAIL`, and 0 otherwise.
+
+### 10. Trace chronological task history (`atb log`)
+
+Even after `atb gc --apply` has deleted the task branch and worktree, `atb log` reconstructs the full timeline:
+
+```bash
+atb log T002
+```
+
+Real output:
+
+```text
+T002 Localize greeting [done]
+2026-11-18 13:29  4e2baf9  todo → doing
+2026-11-18 13:29  测试 exit 0（0.1s）
+2026-11-18 13:29  2192ef1  doing → review
+2026-11-18 13:29  e7d5acc  review → done
+2026-11-18 13:29  已合并（621ccb1）
+返工记录：0 条
+```
+
+Pass `--verbose` to also print the last 5 lines of each recorded test run output, or `--json` for structured history events.
+
+---
 
 ## State machine
 
@@ -109,66 +327,9 @@ stateDiagram-v2
 Notes:
 
 - `atb check` and `atb prompt` do not change status.
-- `atb review` on a `rework` sheet produces a review but leaves the status unchanged; run `atb start` first.
-- `dropped` is a valid sheet status, but 0.1.0 has no `atb drop` command. Set `status = "dropped"` in the sheet manually if a task is abandoned.
-- `done --merge` and `done --clean` have additional preconditions: main worktree, target branch checked out, no conflicting uncommitted files, and a passing last test record.
-
-## Parallel tasks
-
-Use `allow` / `deny` to make ownership explicit before starting:
-
-```bash
-atb new "Reader tests" --agent claude \
-  --allow "src/pkg/readers.py" --allow "tests/test_readers.py" \
-  --deny "src/pkg/dashboard/**"
-
-atb new "Dashboard shell" --agent gemini \
-  --allow "src/pkg/dashboard/**" --allow "tests/test_dashboard.py" \
-  --deny "src/pkg/readers.py"
-```
-
-Then check for collisions before work overlaps:
-
-```bash
-atb status
-atb conflicts
-```
-
-`status` shows status, branch, ahead/behind counts, changed files, violations, and the last test result. `conflicts` compares active tasks (`doing`, `review`, `rework`) by changed files, then uses `git merge-tree` to distinguish real conflicts from clean auto-merges. It also reports baseline drift: files changed on the target after a task's baseline that the task also touches. Use the output to reorder tasks, adjust scopes, or rebase a task before review. `conflicts` exits 1 for real conflicts and 2 when it cannot determine an answer (for example, a missing branch).
-
-## Real pitfalls
-
-### T003: merge-tree messages looked like files
-
-**Symptom:** a real conflict was reported as `['f.txt', 'Auto-merging f.txt', 'CONFLICT ...']`, and invalid refs were treated as “clean auto-merge”.
-
-**Cause:** `git merge-tree` writes human-readable messages as well as the tree OID and file list; the parser also assumed every non-zero exit meant a conflict.
-
-**How atb prevents it:** `gitops.merge_tree_conflicts` uses `--no-messages`, validates the first line as a tree OID, and returns only file paths. `checks.compute_conflicts` puts unreadable pairs into an explicit `errors` section and exits 2 instead of silently continuing. The T003 rework note records the exact expected conflict list (`['f.txt']`) so this cannot regress quietly.
-
-### T006: offline packaging needed a newer setuptools
-
-**Symptom:** `pip install -e .` and `python -m build --no-isolation` failed locally with `invalid command 'bdist_wheel'` or “wheel is not installed”.
-
-**Cause:** the build requirements declared `wheel` separately while the machine had setuptools 65.5; the environment was offline and could not fetch it.
-
-**How atb prevents it:** the build requirement is now `setuptools>=70.1`, which provides `bdist_wheel`; the task sheet and README state that online installation may fetch build dependencies, while offline use runs from `PYTHONPATH=src`. A test asserts that `wheel` is absent from `build-system.requires` and the setuptools minimum is at least 70.1.
-
-### T002: start and prompt had edge cases
-
-**Symptom:** a `todo` task could be started twice, a `rework` task needed a different worktree path, and the handoff did not consistently put rework notes first.
-
-**Cause:** the first implementation treated `todo` and `rework` the same and rendered the body before considering the rework section.
-
-**How atb prevents it:** `cmd_start` accepts only `todo`/`rework`; `todo` refuses an existing branch or path, while `rework` reuses the worktree. `cmd_prompt` extracts the rework section and places it first with a visible marker. The T002 acceptance tests cover dependency refusal, `--force`, duplicate start, worktree reuse, and rework-first prompt output.
-
-### T004 and T003: two agents, overlapping commands
-
-**Symptom:** T003 was changing `src/**` and tests while T004 needed README, CI, and examples; both could have touched shared command documentation and delayed each other.
-
-**Cause:** task scopes were described only in prose, so an agent could not prove its edit was outside another task's ownership.
-
-**How atb prevents it:** T004's sheet denies `src/**` and `tests/**` while allowing docs/CI/examples; `atb conflicts` compares the active branches and reports overlapping files or baseline drift before merge. The T004 sheet also records that it merges only after T003, making the dependency explicit instead of relying on chat memory.
+- `atb review` changes `doing` or `rework` to `review`.
+- `dropped` is a valid sheet status (`status = "dropped"` edited manually when a task is abandoned).
+- `done --merge` and `done --clean` require: main worktree, target branch checked out, no overlapping uncommitted files, and a passing last test record.
 
 ## Command cheat sheet
 
@@ -179,22 +340,17 @@ atb conflicts
 | `atb list [--status S]` / `atb show ID` | Inspect sheets. |
 | `atb start ID [--base REV] [--force]` | Open/reuse the worktree and set `doing`. |
 | `atb prompt ID [--lang zh\|en]` | Print the complete handoff. |
-| `atb check ID [--test] [--strict] [--json]` | Scope check; optionally run tests. |
-| `atb status [--json]` | Board metrics and last test state. |
+| `atb dispatch [--json] [--lang zh\|en]` | Print a per-window forwarding checklist. |
+| `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until status/commits/new-task changes, stalls, or activity changes. |
+| `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope check; optionally run tests (isolated `HOME` option). |
+| `atb status [--json]` | Board metrics, `DIRTY`, `IDLE`, and last test state. |
 | `atb conflicts [--json]` | File overlap, merge-tree conflicts, and drift. |
-| `atb review ID [--out FILE] [--lang zh\|en]` | Build a review sheet; `doing` becomes `review`. |
+| `atb review ID [--out FILE] [--lang zh\|en]` | Build an enriched review sheet (`Activity and history`, uncommitted alert, doctor hints). |
 | `atb rework ID --note TEXT` (or `@file`) | Send back and append rework notes. |
 | `atb done ID [--merge] [--clean] [--force]` | Verify and finish; optional merge and cleanup. |
-| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or clean up leftover worktrees and branches for `done`/`dropped` tasks. |
-| `atb doctor [--json]` | Run a one-shot read-only check for git version, config, task sheets, active worktrees, leftovers, and orphans. |
-| `atb log ID [--json] [--verbose]` | Show chronological status changes, rework notes, test runs, and merge info for one task. |
-| `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static board (`--stall` highlights `doing`/`rework` tasks idle >= MINUTES, default 120; `--lang` sets zh/en, default zh). |
+| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches for `done`/`dropped` tasks. |
+| `atb doctor [--json]` | One-shot read-only environment and board health check. |
+| `atb log ID [--json] [--verbose]` | Chronological status changes, rework notes, test runs, and merges. |
+| `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static HTML board (default `zh`, stall threshold `120` min). |
 
-All commands accept `--help`; the flags above are the current 0.1.0 surface.
-
-## Cleanup (`atb gc`)
-
-Tasks merged without `--clean`, merged manually, or marked `dropped` leave worktrees and local branches behind. `atb gc` inspects `done` and `dropped` tasks only (`todo` / `doing` / `review` / `rework` are never touched) and classifies each candidate as `remove`, `skip: dirty`, `skip: unmerged`, or `skip: missing`.
-
-- **Dry-run by default:** `atb gc` only prints what would happen without deleting anything. Pass `--apply` to execute removals.
-- **Never force-deletes branches:** `atb gc --apply` uses `git worktree remove` (refuses when dirty) and `git branch -d` (never `-D`). For `dropped` tasks with unmerged commits, `--include-unmerged` still keeps the branch and only removes a clean worktree so unmerged work is never lost silently.
+All commands accept `--help`.

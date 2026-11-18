@@ -59,11 +59,15 @@ echo
 echo "=== 2. atb new (T001 & T002) ==="
 atb new "Update greeting message" --agent claude --allow "src/app.py" --allow "tests/**" --deny "src/core.py"
 atb new "Localize greeting" --agent opencode --allow "src/app.py" --allow "tests/**" --deny "src/core.py"
+git add .taskboard
+git commit -m "chore: add T001 and T002 task sheets" -q
 
 echo
 echo "=== 3. atb start (T001 & T002) ==="
 atb start T001
 atb start T002
+git add .taskboard/tasks
+git commit -m "chore: mark T001 and T002 doing" -q
 
 WT1="$TMP_ROOT/demo-repo-tasks/T001"
 WT2="$TMP_ROOT/demo-repo-tasks/T002"
@@ -129,3 +133,25 @@ atb prompt T001 --lang en
 echo
 echo "=== 11. atb dispatch (forwarding checklist) ==="
 atb dispatch
+
+echo
+echo "=== 12. atb review T002 & atb done T002 --merge (keep worktree for gc demo) ==="
+atb review T002 >/dev/null
+git add .taskboard/tasks/T002.md
+git commit -m "chore: mark T002 review" -q
+atb done T002 --merge
+git add .taskboard/tasks/T002.md
+git commit -m "chore: mark T002 done" -q
+
+echo
+echo "=== 13. atb gc (dry-run preview) ==="
+atb gc
+
+echo
+echo "=== 14. atb doctor (health check) ==="
+atb doctor
+
+echo
+echo "=== 15. atb gc --apply & atb log T002 ==="
+atb gc --apply
+atb log T002

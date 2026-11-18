@@ -1,6 +1,6 @@
 # agent-taskboard (`atb`)
 
-> [English](README.md) · 状态：pre-alpha，持续开发中。设计文档见 [DESIGN.md](DESIGN.md)。
+> [English](https://github.com/LingXi-fur/agent-taskboard/blob/main/README.md) · [协作指南](https://github.com/LingXi-fur/agent-taskboard/blob/main/docs/guide.zh-CN.md) · 状态：pre-alpha，持续开发中。设计文档见 [DESIGN.md](https://github.com/LingXi-fur/agent-taskboard/blob/main/DESIGN.md)。
 
 多个 AI 编程 Agent（Claude Code、Codex、OpenCode、Gemini CLI 等）并行干活时的任务看板：任务单 → 独立 worktree 交接 → 越界与测试检查 → 跨任务冲突检测 → 按验收清单审查。
 
@@ -28,9 +28,17 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 需要 **Python 3.11+** 和 **Git 2.38+**（用于 `git merge-tree --write-tree`），零第三方 Python 依赖。
 
-从源码安装（需要联网一次，用于获取构建依赖 `setuptools>=77.0`）：
+通过 `pipx` 直接从 GitHub 安装：
 
 ```bash
+pipx install git+https://github.com/LingXi-fur/agent-taskboard
+```
+
+或者从源码安装（首次需要联网获取构建依赖 `setuptools>=77.0`）：
+
+```bash
+git clone https://github.com/LingXi-fur/agent-taskboard.git
+cd agent-taskboard
 pip install -e .
 ```
 
@@ -58,14 +66,14 @@ alias atb='PYTHONPATH=/path/to/agent-taskboard/src python3 -m agent_taskboard'
 bash examples/walkthrough.sh
 ```
 
-想预览静态 HTML 看板，可在任意含任务单的仓库中生成后，用浏览器打开：
+想预览静态 HTML 看板（支持 `--lang zh|en`，默认 `zh`；以及 `--stall MIN`，默认 `120`），可在任意含任务单的仓库中生成后用浏览器打开：
 
 ```bash
-atb board --html board.html
+atb board --html board.html --lang zh --stall 120
 ```
 
 然后双击 `board.html`，或在该目录运行 `python3 -m http.server` 后打开提示的地址。
-看板是单文件、自包含的（内联 CSS，暗色优先），不加载任何外部资源。
+看板是单文件、自包含的（内联 CSS，暗色优先，含 `未提交`/`空闲` 列与卡住高亮），不加载任何外部资源。
 
 ## 任务单格式
 
@@ -115,10 +123,13 @@ created = 2026-11-14T08:00:00Z
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | 校验已提交与未提交改动的范围，可选在隔离的临时 `HOME` 中运行测试 | 已实现 |
 | `atb status [--json]` | 展示任务看板：状态、分支、领先/落后提交、改动文件数、未提交文件数(DIRTY)、越界数、空闲时长(IDLE)、最近测试 | 已实现 |
 | `atb conflicts [--json]` | 两两对比活跃任务的文件重叠、`merge-tree` 真实冲突与基线漂移 | 已实现 |
-| `atb review ID [--out FILE] [--lang zh\|en]` | 生成汇总检查、测试、diffstat 与验收清单的 Markdown 审查表（中/英） | 已实现 |
+| `atb review ID [--out FILE] [--lang zh\|en]` | 生成汇总检查、测试、活动与历史、doctor 提示、diffstat、冲突与验收清单的 Markdown 审查表（中/英） | 已实现 |
 | `atb rework ID --note "..."` | 将状态改为 `rework` 并追加意见，使下次 `atb prompt` 优先展示 | 已实现 |
 | `atb done ID [--merge] [--clean] [--force]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree 与分支 | 已实现 |
-| `atb board --html out.html` | 导出单文件静态 HTML 看板 | 已实现 |
+| `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或安全清理 `done`/`dropped` 任务遗留的 worktree 与分支（只用 `git branch -d`） | 已实现 |
+| `atb doctor [--json]` | 一次性只读环境体检：git 版本、配置、任务单、活跃 worktree、残留与孤儿 worktree | 已实现 |
+| `atb log ID [--json] [--verbose]` | 按时间线追溯单个任务的历史：状态变迁、返工记录、测试运行与合并提交 | 已实现 |
+| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | 导出单文件静态 HTML 看板（含未提交/空闲列、卡住高亮及中英双语，默认 `zh`） | 已实现 |
 | `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待任务状态/分支提交/新增任务单变化，或 stall/activity 告警，逐行打印摘要后退出（超时退出码 3） | 已实现 |
 
