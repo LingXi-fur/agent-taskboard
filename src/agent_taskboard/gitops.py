@@ -60,6 +60,41 @@ def branch_exists(name: str, cwd: str | Path | None = None) -> bool:
     return proc.returncode == 0
 
 
+def branch_snapshot(
+    target: str | None = None,
+    cwd: str | Path | None = None,
+    *,
+    ahead_behind: bool = False,
+) -> dict[str, dict]:
+    """Return one entry per local branch from a single ``git for-each-ref``.
+
+    Each entry has ``tip`` (full SHA) and ``committer_time`` (Unix seconds of
+    the tip commit).  With ``ahead_behind`` it also carries ``ahead``/``behind``
+    relative to ``target``; that uses ``%(ahead-behind:<rev>)`` which requires
+    git >= 2.41 (callers fall back to ``rev-list`` on older git).
+    """
+    fields = ["%(refname:short)", "%(objectname)", "%(committerdate:unix)"]
+    if ahead_behind and target:
+        fields.append(f"%(ahead-behind:{target})")
+    proc = _run(
+        ["for-each-ref", "--format=" + "\t".join(fields), "refs/heads"],
+        cwd=cwd,
+    )
+    snapshot: dict[str, dict] = {}
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        entry: dict = {"tip": parts[1], "committer_time": float(parts[2] or 0)}
+        if ahead_behind and len(parts) >= 4:
+            counts = parts[3].split()
+            if len(counts) == 2:
+                entry["ahead"] = int(counts[0])
+                entry["behind"] = int(counts[1])
+        snapshot[parts[0]] = entry
+    return snapshot
+
+
 def worktree_add(
     path: str | Path, branch: str, base: str, cwd: str | Path | None = None
 ) -> None:
@@ -240,7 +275,7 @@ def uncommitted_entries(
     ``git status --porcelain`` counts as a single line.
     """
     proc = _run(
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree,
     )
     tokens = proc.stdout.split("\0")

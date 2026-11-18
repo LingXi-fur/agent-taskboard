@@ -608,14 +608,17 @@ def format_idle(seconds: int) -> str:
 
 
 def _last_activity(
-    worktree: Path, branch: str, repo_root: Path, uncommitted_paths: list[str]
+    worktree: Path, branch: str, repo_root: Path, uncommitted_paths: list[str],
+    *, commit_ts: float | None = None,
 ) -> float:
     """Latest of: branch tip commit, uncommitted file mtimes, worktree creation.
 
     The worktree's ``.git`` file is written by ``git worktree add``, so a task
     that was just started does not inherit the age of its base commit.
     """
-    activity = gitops.commit_time(branch, cwd=repo_root)
+    if commit_ts is None:
+        commit_ts = gitops.commit_time(branch, cwd=repo_root)
+    activity = commit_ts
     latest = gitops.latest_mtime(worktree, uncommitted_paths)
     if latest is not None:
         activity = max(activity, latest)
@@ -626,7 +629,21 @@ def _last_activity(
     return activity
 
 
-def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
+def _branch_snapshot(cfg: config.Config, repo_root: Path, *, ahead_behind: bool):
+    """One ``for-each-ref`` for every local branch (falls back on old git)."""
+    if ahead_behind:
+        try:
+            return gitops.branch_snapshot(
+                cfg.target, cwd=repo_root, ahead_behind=True
+            )
+        except gitops.GitError:
+            pass
+    return gitops.branch_snapshot(cfg.target, cwd=repo_root, ahead_behind=False)
+
+
+def _task_board_row(
+    sheet: Sheet, cfg: config.Config, repo_root: Path, branches: dict | None = None
+) -> dict:
     row: dict = {
         "id": sheet.id,
         "status": sheet.status,
@@ -648,11 +665,22 @@ def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         row["missing"] = True
         return row
     worktree = checks.resolve_worktree(cfg, sheet)
-    if not gitops.branch_exists(sheet.branch, cwd=repo_root) or not worktree.exists():
-        row["missing"] = True
-        return row
+    entry = branches.get(sheet.branch) if (branches is not None and sheet.branch) else None
+    if branches is not None:
+        if entry is None or not worktree.exists():
+            row["missing"] = True
+            return row
+        commit_ts = entry["committer_time"]
+    else:
+        if not gitops.branch_exists(sheet.branch, cwd=repo_root) or not worktree.exists():
+            row["missing"] = True
+            return row
+        commit_ts = None
     try:
-        ahead, behind = gitops.rev_list_count(cfg.target, sheet.branch, cwd=repo_root)
+        if branches is not None and "ahead" in entry:
+            ahead, behind = entry["ahead"], entry["behind"]
+        else:
+            ahead, behind = gitops.rev_list_count(cfg.target, sheet.branch, cwd=repo_root)
         entries = gitops.uncommitted_entries(worktree)
         uncommitted_paths = [path for _status, paths in entries for path in paths]
         committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
@@ -663,9 +691,11 @@ def _task_board_row(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         row["changed_files"] = len(all_paths)
         row["violations"] = len(denied) + len(outside)
         row["dirty"] = len(entries)
-        activity = _last_activity(worktree, sheet.branch, repo_root, uncommitted_paths)
+        activity = _last_activity(
+            worktree, sheet.branch, repo_root, uncommitted_paths, commit_ts=commit_ts
+        )
         row["idle_seconds"] = max(0, int(time.time() - activity))
-    except gitops.GitError:
+    except (gitops.GitError, OSError):
         row["missing"] = True
     return row
 
@@ -713,7 +743,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
-    rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
+    branches = _branch_snapshot(cfg, repo_root, ahead_behind=True)
+    rows = [_task_board_row(sheet, cfg, repo_root, branches=branches) for sheet in sheets]
 
     summary = {status: 0 for status in STATUSES}
     for row in rows:
@@ -1013,7 +1044,8 @@ def cmd_board(args: argparse.Namespace) -> int:
     _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     sheets = _load_tasks(repo_root)
-    rows = [_task_board_row(sheet, cfg, repo_root) for sheet in sheets]
+    branches = _branch_snapshot(cfg, repo_root, ahead_behind=True)
+    rows = [_task_board_row(sheet, cfg, repo_root, branches=branches) for sheet in sheets]
     for row in rows:
         row["idle_text"] = (
             format_idle(row["idle_seconds"])
@@ -1148,7 +1180,7 @@ def cmd_gc(args: argparse.Namespace) -> int:
 WATCH_STALL_STATUSES = ("doing", "rework")
 
 
-def _watch_activity(cfg, sheet, repo_root, tip):
+def _watch_activity(cfg, sheet, repo_root, tip, commit_ts=None):
     """Return ``(dirty, idle_seconds)`` for a task, or ``(None, None)``."""
     if tip is None:
         return None, None
@@ -1158,13 +1190,17 @@ def _watch_activity(cfg, sheet, repo_root, tip):
     try:
         entries = gitops.uncommitted_entries(worktree)
         paths = [path for _status, ps in entries for path in ps]
-        activity = _last_activity(worktree, sheet.branch, repo_root, paths)
+        activity = _last_activity(
+            worktree, sheet.branch, repo_root, paths, commit_ts=commit_ts
+        )
         return len(entries), max(0, int(time.time() - activity))
-    except gitops.GitError:
+    except (gitops.GitError, OSError):
         return None, None
 
 
-def _watch_scan(repo_root: Path, cfg) -> tuple[dict[str, dict], set[str]]:
+def _watch_scan(
+    repo_root: Path, cfg, *, use_snapshot: bool = True
+) -> tuple[dict[str, dict], set[str]]:
     """Snapshot each task plus the ids whose sheets failed to parse.
 
     Reading only refs and task sheets; never fetches or writes anything.
@@ -1174,6 +1210,9 @@ def _watch_scan(repo_root: Path, cfg) -> tuple[dict[str, dict], set[str]]:
     tasks_dir = _tasks_dir(repo_root)
     if not tasks_dir.is_dir():
         return snapshot, failed
+    branches = (
+        _branch_snapshot(cfg, repo_root, ahead_behind=False) if use_snapshot else None
+    )
     for path in sorted(tasks_dir.glob("*.md")):
         task_id = path.stem
         try:
@@ -1181,13 +1220,19 @@ def _watch_scan(repo_root: Path, cfg) -> tuple[dict[str, dict], set[str]]:
         except (AtbError, UnicodeDecodeError, OSError):
             failed.add(task_id)
             continue
-        tip = None
-        if sheet.branch and gitops.branch_exists(sheet.branch, cwd=repo_root):
-            try:
-                tip = gitops.rev_parse(sheet.branch, cwd=repo_root)
-            except gitops.GitError:
-                tip = None
-        dirty, idle = _watch_activity(cfg, sheet, repo_root, tip)
+        if branches is not None:
+            entry = branches.get(sheet.branch) if sheet.branch else None
+            tip = entry["tip"] if entry else None
+            commit_ts = entry["committer_time"] if entry else None
+        else:
+            tip = None
+            commit_ts = None
+            if sheet.branch and gitops.branch_exists(sheet.branch, cwd=repo_root):
+                try:
+                    tip = gitops.rev_parse(sheet.branch, cwd=repo_root)
+                except gitops.GitError:
+                    tip = None
+        dirty, idle = _watch_activity(cfg, sheet, repo_root, tip, commit_ts=commit_ts)
         snapshot[task_id] = {
             "status": sheet.status,
             "tip": tip,
