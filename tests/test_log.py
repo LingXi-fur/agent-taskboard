@@ -219,5 +219,20 @@ class LogTests(unittest.TestCase):
             self.assertIn("T999", res.stderr)
 
 
+    def test_log_survives_undecodable_runs_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup(Path(tmp))
+            res = self._atb(repo, "new", "Task", "--agent", "gemini")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            runs = repo / ".taskboard" / "runs"
+            runs.mkdir(parents=True, exist_ok=True)
+            good = json.dumps({"timestamp": "2026-11-16T08:00:00+00:00", "exit_code": 0,
+                               "duration": 1.5, "command": "t", "output": "ok"})
+            (runs / "T001.jsonl").write_bytes(b"\xff\xfe garbage\n" + good.encode() + b"\n")
+            res = self._atb(repo, "log", "T001", "--json")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertNotIn("Traceback", res.stderr)
+            self.assertIn("1.5", res.stdout)
+
 if __name__ == "__main__":
     unittest.main()

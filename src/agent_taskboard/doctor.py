@@ -122,7 +122,7 @@ def _check_sheets(repo_root: Path) -> tuple[dict[str, Any], list[Sheet]]:
         try:
             text = path.read_text(encoding="utf-8")
             sheet = parse(text)
-        except AtbError as exc:
+        except (AtbError, UnicodeDecodeError, OSError) as exc:
             problems.append(f"{path.name} failed to parse ({exc})")
             continue
         if path.stem != sheet.id:

@@ -149,6 +149,17 @@ class DoctorTests(unittest.TestCase):
             self.assertIn("T002.md", sheets_chk["message"])
             self.assertIn("T888", sheets_chk["message"])
 
+    def test_doctor_reports_non_utf8_sheet_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._setup(Path(tmp))
+            (repo / ".taskboard" / "tasks" / "T001.md").write_bytes(b"+++\nid = \"\xff\xfe\"\n+++\n")
+            res = self._atb(repo, "doctor", "--json")
+            self.assertEqual(res.returncode, 1, res.stderr)
+            self.assertNotIn("Traceback", res.stderr)
+            sheets_chk = self._by_name(json.loads(res.stdout))["sheets"]
+            self.assertEqual(sheets_chk["status"], "FAIL")
+            self.assertIn("T001.md", sheets_chk["message"])
+
     def test_doctor_active_missing_worktree_and_wrong_branch_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
