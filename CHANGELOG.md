@@ -3,7 +3,7 @@
 All notable changes to `atb` are documented in this file.
 `atb` 的重要变更记录在此文件中。
 
-## [Unreleased]
+## [0.1.3] - 2026-11-18
 
 ### Added / 新增
 
