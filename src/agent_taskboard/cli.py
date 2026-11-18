@@ -870,6 +870,7 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "test": checks.last_test_result(repo_root, sheet.id),
         "dirty": board_row["dirty"],
         "idle": idle_text,
+        "idle_seconds": idle_seconds,
         "rework_count": hist["rework_count"],
         "last_test_detail": last_test_detail,
         "status_history": status_events,
@@ -880,6 +881,83 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "drift": drift,
         "acceptance": _acceptance_text(sheet.body),
     }
+
+
+def _structured_diffstat(base: str, branch: str, repo_root: Path) -> dict:
+    """Return structured per-file insertions/deletions and totals."""
+    proc = subprocess.run(
+        ["git", "diff", "--numstat", "-z", "-M", f"{base}...{branch}"],
+        cwd=str(repo_root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or "git diff --numstat failed"
+        raise gitops.GitError(detail)
+
+    tokens = proc.stdout.split("\0")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
+    files: list[dict] = []
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        i += 1
+        parts = entry.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        ins_raw, del_raw, path_part = parts
+        binary = ins_raw == "-" or del_raw == "-"
+        insertions = None if binary else int(ins_raw)
+        deletions = None if binary else int(del_raw)
+        if path_part == "" and i + 1 < len(tokens):
+            old_path = tokens[i]
+            new_path = tokens[i + 1]
+            i += 2
+            files.append({
+                "path": new_path,
+                "old_path": old_path,
+                "insertions": insertions,
+                "deletions": deletions,
+                "binary": binary,
+            })
+        else:
+            files.append({
+                "path": path_part,
+                "insertions": insertions,
+                "deletions": deletions,
+                "binary": binary,
+            })
+    return {
+        "files": files,
+        "totals": {
+            "files": len(files),
+            "insertions": sum(f["insertions"] or 0 for f in files),
+            "deletions": sum(f["deletions"] or 0 for f in files),
+        },
+    }
+
+
+def _build_review_json(
+    sheet: Sheet, cfg: config.Config, repo_root: Path, lang: str = "zh"
+) -> str:
+    info = _review_info(sheet, cfg, repo_root)
+    info["target"] = cfg.target
+    info["structured_diffstat"] = _structured_diffstat(
+        sheet.base, sheet.branch, repo_root
+    )
+    try:
+        info["target_conflicts"] = gitops.merge_tree_conflicts(
+            cfg.target, sheet.branch, cwd=repo_root
+        )
+        info["target_merge_error"] = None
+    except gitops.GitError as exc:
+        info["target_conflicts"] = []
+        info["target_merge_error"] = str(exc)
+    payload = render.build_review_json(info, lang=lang)
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
 
 
 def _build_review_markdown(
@@ -908,17 +986,20 @@ def cmd_review(args: argparse.Namespace) -> int:
     if changed:
         sheet.status = "review"
 
-    markdown = _build_review_markdown(sheet, cfg, repo_root, lang=args.lang)
+    if args.json:
+        output_text = _build_review_json(sheet, cfg, repo_root, lang=args.lang)
+    else:
+        output_text = _build_review_markdown(sheet, cfg, repo_root, lang=args.lang)
 
     if changed:
         path = _tasks_dir(repo_root) / f"{sheet.id}.md"
         path.write_text(dump(sheet), encoding="utf-8")
 
     if args.out:
-        Path(args.out).write_text(markdown + "\n", encoding="utf-8")
+        Path(args.out).write_text(output_text + "\n", encoding="utf-8")
         print(f"review written to {args.out}")
     else:
-        print(markdown)
+        print(output_text)
     return 0
 
 
@@ -1561,6 +1642,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("id", help="task id, e.g. T001")
     p_review.add_argument("--out", help="write the review to FILE instead of stdout")
     p_review.add_argument("--lang", choices=["zh", "en"], default="zh", help="review language")
+    p_review.add_argument("--json", action="store_true")
     p_review.set_defaults(func=cmd_review)
 
     p_rework = sub.add_parser("rework", help="send a task back for rework")
