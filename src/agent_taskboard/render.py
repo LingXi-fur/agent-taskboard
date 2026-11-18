@@ -223,6 +223,63 @@ ul { padding-left: 1.25rem; }
 
 _STALL_STATUSES = ("doing", "rework")
 
+_BOARD_I18N: dict[str, dict[str, Any]] = {
+    "zh": {
+        "html_lang": "zh-CN",
+        "title": "atb 任务看板",
+        "heading": "atb 任务看板",
+        "headers": (
+            "ID", "状态", "Agent", "标题", "分支",
+            "领先/落后", "文件", "未提交", "越界", "空闲", "测试",
+        ),
+        "statuses": {
+            "todo": "待办",
+            "doing": "进行中",
+            "review": "待审查",
+            "rework": "返工",
+            "done": "已完成",
+            "dropped": "已废弃",
+        },
+        "missing": "缺失",
+        "stall_tag": "可能卡住",
+        "meta_prefix": "生成于",
+        "threshold_fmt": "（阈值 {minutes} 分钟）",
+        "stall_summary": "可能卡住：",
+        "conflicts_real": "真实冲突",
+        "conflicts_mergeable": "同文件（可自动合并）",
+        "conflicts_drift": "基线漂移",
+        "conflicts_errors": "无法判断",
+        "none": "无",
+    },
+    "en": {
+        "html_lang": "en",
+        "title": "atb board",
+        "heading": "atb board",
+        "headers": (
+            "ID", "Status", "Agent", "Title", "Branch",
+            "Ahead/Behind", "Files", "Dirty", "Violations", "Idle", "Test",
+        ),
+        "statuses": {
+            "todo": "todo",
+            "doing": "doing",
+            "review": "review",
+            "rework": "rework",
+            "done": "done",
+            "dropped": "dropped",
+        },
+        "missing": "missing",
+        "stall_tag": "possibly stalled",
+        "meta_prefix": "Generated at",
+        "threshold_fmt": " (stall threshold {minutes}m)",
+        "stall_summary": "Possibly stalled: ",
+        "conflicts_real": "Real conflicts",
+        "conflicts_mergeable": "Same files (auto-mergeable)",
+        "conflicts_drift": "Baseline drift",
+        "conflicts_errors": "Unable to determine",
+        "none": "none",
+    },
+}
+
 
 def _is_stalled(row: dict, stall_minutes: int) -> bool:
     idle_seconds = row.get("idle_seconds")
@@ -237,9 +294,10 @@ def _esc(value: object) -> str:
     return html.escape(str(value))
 
 
-def _status_badge(status: str) -> str:
+def _status_badge(status: str, label: str | None = None) -> str:
     cls = _esc(status)
-    return f'<span class="badge {cls}">{_esc(status)}</span>'
+    text = _esc(label if label is not None else status)
+    return f'<span class="badge {cls}">{text}</span>'
 
 
 def _cell(value: object, cls: str | None = None) -> str:
@@ -247,9 +305,12 @@ def _cell(value: object, cls: str | None = None) -> str:
     return f"<td{attr}>{_esc(value)}</td>"
 
 
-def _task_row_html(row: dict, *, stall_minutes: int = 120) -> str:
+def _task_row_html(
+    row: dict, *, stall_minutes: int = 120, texts: dict[str, Any] | None = None
+) -> str:
+    i18n = texts or _BOARD_I18N["zh"]
     if row["missing"]:
-        branch_cell = _cell("missing", "missing")
+        branch_cell = _cell(i18n["missing"], "missing")
     else:
         branch_cell = _cell(row["branch"] or "—")
     if row["ahead"] is None:
@@ -263,15 +324,17 @@ def _task_row_html(row: dict, *, stall_minutes: int = 120) -> str:
     idle_text = row.get("idle_text") or "—"
     stalled = _is_stalled(row, stall_minutes)
     if stalled:
-        idle_cell = f'<td>{_esc(idle_text)}<span class="stall-tag">可能卡住</span></td>'
+        stall_tag = _esc(i18n["stall_tag"])
+        idle_cell = f'<td>{_esc(idle_text)}<span class="stall-tag">{stall_tag}</span></td>'
     else:
         idle_cell = _cell(idle_text)
     test_mark = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
     row_attr = ' class="stall-row"' if stalled else ""
+    status_label = i18n["statuses"].get(row["status"], row["status"])
     return (
         f"<tr{row_attr}>"
         + _cell(row["id"])
-        + f"<td>{_status_badge(row['status'])}</td>"
+        + f"<td>{_status_badge(row['status'], status_label)}</td>"
         + _cell(row["agent"])
         + _cell(row["title"])
         + branch_cell
@@ -285,9 +348,11 @@ def _task_row_html(row: dict, *, stall_minutes: int = 120) -> str:
     )
 
 
-def _conflict_list_html(entries: list[dict], kind: str) -> str:
+def _conflict_list_html(
+    entries: list[dict], kind: str, *, empty_text: str = "none"
+) -> str:
     if not entries:
-        return '<p class="muted">none</p>'
+        return f'<p class="muted">{_esc(empty_text)}</p>'
     items = []
     for entry in entries:
         if kind == "pair":
@@ -307,49 +372,68 @@ def render_board_html(
     *,
     stall_minutes: int = 120,
     generated_at: str | None = None,
+    lang: str = "zh",
 ) -> str:
     """Render a self-contained static HTML board."""
-    headers = (
-        "ID", "Status", "Agent", "Title", "Branch",
-        "Ahead/Behind", "Files", "Dirty", "Violations", "Idle", "Test",
-    )
+    i18n = _BOARD_I18N.get(lang, _BOARD_I18N["zh"])
+    headers = i18n["headers"]
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    rows = "".join(_task_row_html(row, stall_minutes=stall_minutes) for row in tasks)
+    rows = "".join(
+        _task_row_html(row, stall_minutes=stall_minutes, texts=i18n)
+        for row in tasks
+    )
     stall_count = sum(1 for row in tasks if _is_stalled(row, stall_minutes))
-    summary_text = " · ".join(f"{_esc(k)}: {summary[k]}" for k in summary)
+    summary_text = " · ".join(
+        f"{_esc(i18n['statuses'].get(k, k))}: {summary[k]}" for k in summary
+    )
     if generated_at is None:
         generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
     stall_summary_cls = "stall-count-alert" if stall_count > 0 else ""
+    stall_summary_text = f"{_esc(i18n['stall_summary'])}{stall_count}"
     stall_summary_html = (
-        f'<span class="{stall_summary_cls}">可能卡住：{stall_count}</span>'
+        f'<span class="{stall_summary_cls}">{stall_summary_text}</span>'
         if stall_summary_cls
-        else f"可能卡住：{stall_count}"
+        else stall_summary_text
     )
+    threshold_text = i18n["threshold_fmt"].format(minutes=stall_minutes)
     top_summary_html = (
-        f'<p class="board-meta">生成于 {_esc(generated_at)}（阈值 {_esc(stall_minutes)} 分钟）'
-        f" · {stall_summary_html} · {summary_text}</p>"
+        f'<p class="board-meta">{_esc(i18n["meta_prefix"])} {_esc(generated_at)}'
+        f"{_esc(threshold_text)} · {stall_summary_html} · {summary_text}</p>"
     )
 
+    empty_text = i18n["none"]
     sections = [
-        ("Real conflicts", _conflict_list_html(conflicts["conflicts"], "pair")),
-        ("Same files (auto-mergeable)", _conflict_list_html(conflicts["mergeable"], "pair")),
-        ("Baseline drift", _conflict_list_html(conflicts["drift"], "task")),
+        (
+            i18n["conflicts_real"],
+            _conflict_list_html(conflicts["conflicts"], "pair", empty_text=empty_text),
+        ),
+        (
+            i18n["conflicts_mergeable"],
+            _conflict_list_html(conflicts["mergeable"], "pair", empty_text=empty_text),
+        ),
+        (
+            i18n["conflicts_drift"],
+            _conflict_list_html(conflicts["drift"], "task", empty_text=empty_text),
+        ),
     ]
     if conflicts.get("errors"):
-        sections.append(("Unable to determine", _conflict_list_html(conflicts["errors"], "error")))
+        sections.append((
+            i18n["conflicts_errors"],
+            _conflict_list_html(conflicts["errors"], "error", empty_text=empty_text),
+        ))
     conflicts_html = "".join(f"<h2>{_esc(title)}</h2>{body}" for title, body in sections)
 
     return (
         "<!DOCTYPE html>\n"
-        '<html lang="en">\n'
+        f'<html lang="{_esc(i18n["html_lang"])}">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        "<title>atb board</title>\n"
+        f"<title>{_esc(i18n['title'])}</title>\n"
         f"<style>{_BOARD_CSS}</style>\n"
         "</head>\n"
         "<body>\n"
-        "<h1>atb board</h1>\n"
+        f"<h1>{_esc(i18n['heading'])}</h1>\n"
         f"{top_summary_html}\n"
         f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>\n"
         f'<p class="summary">{summary_text}</p>\n'

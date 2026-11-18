@@ -153,9 +153,9 @@ class BoardActivityTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr)
             html_text = out_html.read_text(encoding="utf-8")
 
-            # Headers include Dirty and Idle
-            self.assertIn("<th>Dirty</th>", html_text)
-            self.assertIn("<th>Idle</th>", html_text)
+            # Headers include Dirty and Idle (zh by default)
+            self.assertIn("<th>未提交</th>", html_text)
+            self.assertIn("<th>空闲</th>", html_text)
 
             # Top summary shows generated timestamp, threshold, and stall count = 1
             self.assertRegex(html_text, r"生成于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（阈值 30 分钟）")

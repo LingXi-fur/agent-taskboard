@@ -188,7 +188,7 @@ atb conflicts
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or clean up leftover worktrees and branches for `done`/`dropped` tasks. |
 | `atb doctor [--json]` | Run a one-shot read-only check for git version, config, task sheets, active worktrees, leftovers, and orphans. |
 | `atb log ID [--json] [--verbose]` | Show chronological status changes, rework notes, test runs, and merge info for one task. |
-| `atb board --html FILE [--stall MINUTES]` | Export a standalone static board (`--stall` highlights `doing`/`rework` tasks idle >= MINUTES, default 120). |
+| `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static board (`--stall` highlights `doing`/`rework` tasks idle >= MINUTES, default 120; `--lang` sets zh/en, default zh). |
 
 All commands accept `--help`; the flags above are the current 0.1.0 surface.
 
