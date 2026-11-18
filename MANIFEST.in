@@ -1,0 +1,12 @@
+include LICENSE
+include README.md
+include README.zh-CN.md
+include pyproject.toml
+recursive-include src *.py
+prune tests
+prune examples
+prune docs
+prune .taskboard
+prune .github
+exclude DESIGN.md CONTRIBUTING.md CHANGELOG.md
+global-exclude *.pyc *.pyo __pycache__ .DS_Store
