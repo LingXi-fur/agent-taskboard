@@ -14,6 +14,10 @@ All notable changes to `atb` are documented in this file.
 
 - Packaging metadata follows PEP 639: `license = "MIT"` with `license-files`, no `License ::` classifier, build requirement `setuptools>=77.0`; adds project URLs (GitHub repository, changelog, issues). README links are absolute so they work on PyPI. / 打包元数据按 PEP 639：`license = "MIT"` 加 `license-files`，去掉 `License ::` 分类，构建依赖改为 `setuptools>=77`；新增项目链接（GitHub 仓库、更新日志、问题）。README 链接改为绝对地址，在 PyPI 上也能打开。
 
+### Performance / 性能
+
+- `atb status`, `board` and `watch` read every branch's tip, commit time and ahead/behind from one `git for-each-ref` instead of several git calls per task (falls back to `rev-list` on git < 2.41). With 200 tasks (20 active): 66–74% fewer git processes, `status` about 1.0 s → 0.35 s, `watch` per poll about 0.7 s → 0.19 s. `scripts/bench_status.py` reproduces the numbers. / `atb status`、`board`、`watch` 用一次 `git for-each-ref` 取所有分支的提交、时间和领先落后数，不再每个任务调用多次 git（git < 2.41 时回退到 `rev-list`）。200 个任务（20 个活跃）时 git 进程减少 66–74%，`status` 约 1.0 秒 → 0.35 秒，`watch` 每轮约 0.7 秒 → 0.19 秒；`scripts/bench_status.py` 可复现。
+
 ### Fixed / 修复
 
 - atb no longer takes git's optional index lock in agents' worktrees: every git call runs with `GIT_OPTIONAL_LOCKS=0`. Before, `atb status`/`board`/`watch` polling a worktree could make the agent's own `git commit` fail with “Unable to create index.lock” (seen on CI as a flaky `test_branch_rewritten`). / atb 不再在 Agent 的 worktree 里拿 git 的可选 index 锁：所有 git 调用都带 `GIT_OPTIONAL_LOCKS=0`。之前 `atb status`/`board`/`watch` 轮询 worktree 时，可能让 Agent 自己的 `git commit` 因 index.lock 失败（CI 上表现为偶发的 `test_branch_rewritten` 失败）。
