@@ -23,14 +23,21 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertTrue((ROOT / project["readme"]).is_file())
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(project["dependencies"], [])
-        self.assertIn("license", project)
+        self.assertEqual(project["license"], "MIT")
+        self.assertEqual(project["license-files"], ["LICENSE"])
         self.assertTrue(project.get("authors"))
         self.assertTrue(project.get("keywords"))
         self.assertTrue(project.get("classifiers"))
-        self.assertIn("License :: OSI Approved :: MIT License", project["classifiers"])
+        # PEP 639: a license expression replaces License :: classifiers.
+        self.assertFalse(any(c.startswith("License ::") for c in project["classifiers"]))
+        urls = project.get("urls", {})
+        self.assertTrue(urls.get("Repository", "").startswith("https://github.com/"))
 
         scripts = project.get("scripts", {})
         self.assertEqual(scripts.get("atb"), "agent_taskboard.cli:main")
+
+        requires = data["build-system"]["requires"]
+        self.assertIn("setuptools>=77.0", requires)
 
         find_cfg = data.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
         self.assertEqual(find_cfg.get("where"), ["src"])
@@ -49,6 +56,17 @@ class PackagingMetadataTests(unittest.TestCase):
         self.assertIn("prune tests", lines)
         self.assertIn("prune .taskboard", lines)
         self.assertIn("prune examples", lines)
+
+    def test_readme_links_are_absolute_for_pypi(self):
+        import re
+
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        relative = [
+            target
+            for target in re.findall(r"\]\(([^)\s]+)\)", text)
+            if not target.startswith(("http://", "https://", "#", "mailto:"))
+        ]
+        self.assertEqual(relative, [], "README.md is rendered on PyPI; use absolute links")
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ rm -rf /tmp/atb-dist
 python3 -m build --outdir /tmp/atb-dist
 ```
 
-If offline without build-env downloads (requires `setuptools >= 70.1` in the active environment):
+If offline without build-env downloads (requires `setuptools >= 77.0` in the active environment):
 
 ```bash
 pip wheel . --no-deps --no-build-isolation -w /tmp/atb-dist

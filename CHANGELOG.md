@@ -3,6 +3,17 @@
 All notable changes to `atb` are documented in this file.
 `atb` 的重要变更记录在此文件中。
 
+## [Unreleased]
+
+### Added / 新增
+
+- `atb review` gains an “Activity and history” section: uncommitted file count, idle time, rework count, last test run (time, exit code, duration), the last 10 status changes, and any `atb doctor` FAIL that names this task. When the worktree still has uncommitted files, a warning at the top says the review covers committed changes only. / `atb review` 新增“活动与历史”段：未提交文件数、空闲时长、返工次数、最近一次测试（时间、退出码、耗时）、最近 10 次状态变化，以及点名该任务的 `atb doctor` FAIL；worktree 还有未提交文件时，顶部提示本次审查只覆盖已提交部分。
+- PyPI readiness (nothing is published): `MANIFEST.in` keeps the sdist to the package, README and LICENSE; `docs/release.md` / `docs/release.zh-CN.md` give the manual build, `twine check` and upload steps; `tests/test_packaging.py` guards the metadata. / PyPI 发布准备（不发布）：`MANIFEST.in` 让 sdist 只含包、README 和 LICENSE；`docs/release.md` / `docs/release.zh-CN.md` 写明手动构建、`twine check` 和上传步骤；`tests/test_packaging.py` 守住元数据。
+
+### Changed / 变更
+
+- Packaging metadata follows PEP 639: `license = "MIT"` with `license-files`, no `License ::` classifier, build requirement `setuptools>=77.0`; adds project URLs (GitHub repository, changelog, issues). README links are absolute so they work on PyPI. / 打包元数据按 PEP 639：`license = "MIT"` 加 `license-files`，去掉 `License ::` 分类，构建依赖改为 `setuptools>=77`；新增项目链接（GitHub 仓库、更新日志、问题）。README 链接改为绝对地址，在 PyPI 上也能打开。
+
 ## [0.1.3] - 2026-11-18
 
 ### Added / 新增

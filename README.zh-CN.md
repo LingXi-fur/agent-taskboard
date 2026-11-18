@@ -28,7 +28,7 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 需要 **Python 3.11+** 和 **Git 2.38+**（用于 `git merge-tree --write-tree`），零第三方 Python 依赖。
 
-从源码安装（需要联网一次，用于获取构建依赖 `setuptools>=70.1`）：
+从源码安装（需要联网一次，用于获取构建依赖 `setuptools>=77.0`）：
 
 ```bash
 pip install -e .

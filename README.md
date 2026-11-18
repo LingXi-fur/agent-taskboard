@@ -1,6 +1,6 @@
 # agent-taskboard (`atb`)
 
-> [中文文档](README.zh-CN.md) · Status: pre-alpha, under active development. See [DESIGN.md](DESIGN.md).
+> [中文文档](https://github.com/LingXi-fur/agent-taskboard/blob/main/README.zh-CN.md) · Status: pre-alpha, under active development. See [DESIGN.md](https://github.com/LingXi-fur/agent-taskboard/blob/main/DESIGN.md).
 
 Run several AI coding agents (Claude Code, Codex, OpenCode, Gemini CLI, ...) in parallel without losing control: write a task sheet, hand it off in its own git worktree, check scope and tests, catch cross-task conflicts before merging, and review against an acceptance checklist.
 
@@ -28,7 +28,7 @@ T001  doing   claude    Update greeting message  claude/update-greeting-message 
 
 Requires **Python 3.11+** and **Git 2.38+** (for `git merge-tree --write-tree`). Zero third-party Python dependencies.
 
-Install from source (needs network access once, to fetch the build dependency `setuptools>=70.1`):
+Install from source (needs network access once, to fetch the build dependency `setuptools>=77.0`):
 
 ```bash
 pip install -e .

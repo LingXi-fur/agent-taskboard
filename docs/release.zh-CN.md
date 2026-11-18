@@ -36,7 +36,7 @@ rm -rf /tmp/atb-dist
 python3 -m build --outdir /tmp/atb-dist
 ```
 
-如完全离线且当前环境已有 `setuptools >= 70.1`，可仅构建 wheel：
+如完全离线且当前环境已有 `setuptools >= 77.0`，可仅构建 wheel：
 
 ```bash
 pip wheel . --no-deps --no-build-isolation -w /tmp/atb-dist

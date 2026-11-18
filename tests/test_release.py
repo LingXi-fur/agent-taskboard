@@ -74,7 +74,7 @@ class VersionTests(unittest.TestCase):
 
 class PackagingTests(unittest.TestCase):
     def test_build_requirements(self):
-        """setuptools>=70.1 bundles bdist_wheel, so no separate wheel is needed."""
+        """setuptools>=77.0 bundles bdist_wheel and supports PEP 639 license expressions."""
         import tomllib
 
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -89,7 +89,7 @@ class PackagingTests(unittest.TestCase):
         match = re.search(r">=\s*(\d+)\.(\d+)", setuptools_reqs[0])
         self.assertIsNotNone(match, setuptools_reqs[0])
         self.assertGreaterEqual(
-            (int(match.group(1)), int(match.group(2))), (70, 1), setuptools_reqs[0]
+            (int(match.group(1)), int(match.group(2))), (77, 0), setuptools_reqs[0]
         )
 
 
