@@ -19,7 +19,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import checks, config, doctor, gc, gitops, prompts, render, scope
+from . import checks, config, doctor, gc, gitops, history, prompts, render, scope
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -1392,6 +1392,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# log
+# --------------------------------------------------------------------------- #
+
+def cmd_log(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    _require_commits(repo_root)
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+    payload = history.collect_task_history(
+        repo_root, cfg, sheet, verbose=args.verbose
+    )
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(history.render_task_history(payload, verbose=args.verbose))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -1514,6 +1534,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="run a one-shot read-only health check")
     p_doctor.add_argument("--json", action="store_true")
     p_doctor.set_defaults(func=cmd_doctor)
+    p_log = sub.add_parser("log", help="show chronological history for a task")
+    p_log.add_argument("id", help="task id, e.g. T001")
+    p_log.add_argument("--json", action="store_true")
+    p_log.add_argument("--verbose", action="store_true", help="include the last 5 lines of each test run output")
+    p_log.set_defaults(func=cmd_log)
 
     return parser
 
