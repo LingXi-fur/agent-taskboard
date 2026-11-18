@@ -8,6 +8,7 @@ with inline CSS, no external resources, and every task field is HTML-escaped.
 from __future__ import annotations
 
 import html
+import re
 from datetime import datetime
 
 # --------------------------------------------------------------------------- #
@@ -208,6 +209,157 @@ def render_review(info: dict, lang: str = "zh") -> str:
     if lang == "en":
         return _render_review_en(info)
     return _render_review_zh(info)
+
+
+_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s*(.*)$")
+
+
+def parse_acceptance_items(acceptance_text: str) -> list[dict[str, object]]:
+    """Parse Markdown checklist items into ``{"text": str, "checked": bool}``."""
+    items: list[dict[str, object]] = []
+    for line in acceptance_text.splitlines():
+        match = _CHECKBOX_RE.match(line)
+        if not match:
+            continue
+        items.append({
+            "text": match.group(2).strip(),
+            "checked": match.group(1).lower() == "x",
+        })
+    return items
+
+
+def build_review_json(info: dict, *, lang: str = "zh") -> dict:
+    """Build a structured JSON dict corresponding to the review sheet."""
+    zh = lang != "en"
+    denied = list(info["denied"])
+    outside = list(info["outside"])
+    uncommitted = list(info["uncommitted"])
+    doctor_fails = list(info.get("doctor_fails") or [])
+    conflicts = list(info["conflicts"])
+    target_conflicts = list(info.get("target_conflicts") or [])
+    target_merge_error = info.get("target_merge_error")
+    target = info.get("target") or "main"
+
+    blockers: list[dict[str, str]] = []
+    if denied or outside:
+        viol_paths = ", ".join(denied + outside)
+        blockers.append({
+            "code": "scope_violation",
+            "message": (
+                f"存在范围越界文件：{viol_paths}"
+                if zh
+                else f"scope violations: {viol_paths}"
+            ),
+        })
+    if uncommitted:
+        paths = ", ".join(uncommitted)
+        blockers.append({
+            "code": "uncommitted",
+            "message": (
+                f"存在未提交改动：{paths}"
+                if zh
+                else f"uncommitted changes: {paths}"
+            ),
+        })
+    if info["test"] != "ok":
+        blockers.append({
+            "code": "test_not_passed",
+            "message": (
+                "最近一次测试未通过或无记录"
+                if zh
+                else "last test run did not pass or has no record"
+            ),
+        })
+    if target_merge_error:
+        blockers.append({
+            "code": "merge_conflict",
+            "message": (
+                f"无法检测与目标分支 {target} 的合并状态：{target_merge_error}"
+                if zh
+                else f"cannot verify merge into target {target}: {target_merge_error}"
+            ),
+        })
+    elif target_conflicts or conflicts:
+        parts: list[str] = []
+        if target_conflicts:
+            files = ", ".join(target_conflicts)
+            parts.append(
+                f"与目标分支 {target} 冲突（{files}）"
+                if zh
+                else f"conflicts with target {target} ({files})"
+            )
+        if conflicts:
+            other_parts = []
+            for entry in conflicts:
+                other = entry["b"] if entry["a"] == info["id"] else entry["a"]
+                other_parts.append(f"{other}: {', '.join(entry['files'])}")
+            desc = "; ".join(other_parts)
+            parts.append(
+                f"与活跃任务冲突（{desc}）"
+                if zh
+                else f"conflicts with active task(s) ({desc})"
+            )
+        detail = "；".join(parts) if zh else "; ".join(parts)
+        blockers.append({
+            "code": "merge_conflict",
+            "message": (
+                f"存在合并冲突，当前不可直接合并：{detail}"
+                if zh
+                else f"not cleanly mergeable: {detail}"
+            ),
+        })
+    if doctor_fails:
+        desc = "；".join(doctor_fails) if zh else "; ".join(doctor_fails)
+        blockers.append({
+            "code": "doctor_fail",
+            "message": (
+                f"doctor 检查存在 FAIL：{desc}"
+                if zh
+                else f"doctor reported FAIL(s): {desc}"
+            ),
+        })
+
+    last_detail = info.get("last_test_detail")
+    last_run = None
+    if last_detail is not None:
+        last_run = {
+            "timestamp": last_detail.get("timestamp"),
+            "time_local": last_detail.get("time_local"),
+            "exit_code": last_detail.get("exit_code"),
+            "duration": last_detail.get("duration"),
+        }
+
+    return {
+        "id": info["id"],
+        "title": info["title"],
+        "agent": info["agent"],
+        "status": info["status"],
+        "branch": info["branch"],
+        "base": info["base"],
+        "scope": {
+            "denied": denied,
+            "outside": outside,
+            "uncommitted": uncommitted,
+        },
+        "test": {
+            "result": info["test"],
+            "last_run": last_run,
+        },
+        "activity": {
+            "dirty": info.get("dirty"),
+            "idle_seconds": info.get("idle_seconds"),
+            "rework_count": info.get("rework_count", 0),
+            "status_history": list(info.get("status_history") or []),
+        },
+        "doctor_fails": doctor_fails,
+        "diffstat": info.get("structured_diffstat") or {"files": [], "totals": {"files": 0, "insertions": 0, "deletions": 0}},
+        "conflicts": conflicts,
+        "mergeable": list(info["mergeable"]),
+        "drift": list(info["drift"]),
+        "acceptance": parse_acceptance_items(info.get("acceptance") or ""),
+        "ready": len(blockers) == 0,
+        "blockers": blockers,
+    }
 
 
 # --------------------------------------------------------------------------- #
