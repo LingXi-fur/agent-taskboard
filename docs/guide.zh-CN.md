@@ -186,6 +186,7 @@ atb conflicts
 | `atb rework ID --note TEXT`（或 `@file`） | 打回并追加返工记录。 |
 | `atb done ID [--merge] [--clean] [--force]` | 校验并收尾；可选合并和清理。 |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或清理 `done`/`dropped` 任务遗留的 worktree 和分支。 |
+| `atb doctor [--json]` | 一次性只读环境体检（git 版本、配置、任务单、活跃任务、残留、孤儿 worktree）。 |
 | `atb board --html FILE [--stall MINUTES]` | 导出单文件静态看板（`--stall` 高亮空闲 ≥ MINUTES 的 `doing`/`rework` 任务，默认 120）。 |
 
 所有命令都支持 `--help`；上面的参数就是当前 0.1.0 的实际范围。

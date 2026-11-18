@@ -19,7 +19,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import checks, config, gc, gitops, prompts, render, scope
+from . import checks, config, doctor, gc, gitops, prompts, render, scope
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -1378,6 +1378,20 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# doctor
+# --------------------------------------------------------------------------- #
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    result, exit_code = doctor.run_doctor(repo_root)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(doctor.render_doctor(result))
+    return exit_code
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -1496,6 +1510,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--activity", action="store_true", help="alert when a task's uncommitted file count changes")
     p_watch.add_argument("--json", action="store_true")
     p_watch.set_defaults(func=cmd_watch)
+
+    p_doctor = sub.add_parser("doctor", help="run a one-shot read-only health check")
+    p_doctor.add_argument("--json", action="store_true")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return parser
 
