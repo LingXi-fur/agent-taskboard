@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import gitops
 from .errors import ConfigError
 
 #: Default values for the known configuration keys (DESIGN.md section 3).
@@ -66,7 +67,7 @@ def find_repo_root(start: str | os.PathLike | None = None) -> Path:
         proc = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=str(start),
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            env=gitops.git_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -177,6 +178,7 @@ def git_version() -> tuple[int, int] | None:
     try:
         proc = subprocess.run(
             ["git", "--version"],
+            env=gitops.git_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
