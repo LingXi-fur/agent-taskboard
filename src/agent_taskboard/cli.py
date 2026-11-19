@@ -482,8 +482,26 @@ def cmd_prompt(args: argparse.Namespace) -> int:
 
     worktree = config.resolve_worktree_root(cfg) / sheet.id
     test_cmd = sheet.test or cfg.test
+    sync_hint = ""
+    try:
+        _ahead, behind = gitops.rev_list_count(
+            cfg.target, sheet.branch, cwd=repo_root
+        )
+    except gitops.GitError:
+        behind = 0
+    if behind > 0:
+        if args.lang == "en":
+            sync_hint = (
+                f"Your branch is {behind} commit(s) behind {cfg.target}: run "
+                f"`atb sync {sheet.id}` before starting."
+            )
+        else:
+            sync_hint = (
+                f"分支落后目标分支 {behind} 个提交：开工前先运行 `atb sync {sheet.id}`。"
+            )
     text = prompts.render_prompt(
-        sheet, str(worktree), sheet.branch, test_cmd, lang=args.lang
+        sheet, str(worktree), sheet.branch, test_cmd, lang=args.lang,
+        sync_hint=sync_hint,
     )
 
     if args.json:
@@ -494,6 +512,102 @@ def cmd_prompt(args: argparse.Namespace) -> int:
         }, ensure_ascii=False))
     else:
         print(text)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# sync
+# --------------------------------------------------------------------------- #
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Bring the task branch up to date with the target (in its worktree)."""
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    cfg = config.load_config(repo_root)
+    sheet = _load_task(repo_root, args.id)
+    if not sheet.branch:
+        raise AtbError(f"task {args.id} has no branch; run 'atb start {args.id}' first")
+    worktree = config.resolve_worktree_root(cfg) / sheet.id
+    if not worktree.exists():
+        raise AtbError(
+            f"worktree {worktree} does not exist; run 'atb start {args.id}' first"
+        )
+    mode = "merge" if args.merge else "rebase"
+
+    try:
+        _ahead, behind = gitops.rev_list_count(
+            cfg.target, sheet.branch, cwd=repo_root
+        )
+    except gitops.GitError as exc:
+        raise AtbError(
+            f"cannot compare {sheet.branch!r} with {cfg.target!r}: {exc}"
+        ) from exc
+    if behind == 0:
+        print(f"{sheet.id}: 分支 {sheet.branch} 已与 {cfg.target} 同步，无需 sync")
+        return 0
+
+    if args.dry_run:
+        try:
+            conflicts = gitops.merge_tree_conflicts(
+                sheet.branch, cfg.target, cwd=repo_root
+            )
+        except gitops.GitError as exc:
+            raise AtbError(f"cannot predict the sync: {exc}") from exc
+        if conflicts:
+            print(f"预测：{mode} 会与 {cfg.target} 冲突（未做任何改动），冲突文件：")
+            for path in conflicts:
+                print(f"  - {path}")
+            return 1
+        print(
+            f"预测：{mode} 可以干净完成（落后 {behind} 个提交），未做任何改动"
+        )
+        return 0
+
+    uncommitted = gitops.uncommitted_files(worktree)
+    if uncommitted:
+        raise AtbError(
+            f"worktree 有未提交改动（{', '.join(uncommitted)}）；"
+            "先提交或 git stash，再运行 atb sync"
+        )
+
+    before = gitops.rev_parse("HEAD", cwd=worktree)
+    if mode == "rebase":
+        proc = gitops.rebase(cfg.target, cwd=worktree)
+    else:
+        proc = gitops.merge_branch(cfg.target, cwd=worktree)
+    if proc.returncode != 0:
+        conflicts = gitops.conflicted_files(cwd=worktree)
+        if mode == "rebase":
+            gitops.rebase_abort(cwd=worktree)
+        else:
+            gitops.merge_abort(cwd=worktree)
+        restored = gitops.rev_parse("HEAD", cwd=worktree) == before
+        lines = [f"sync 失败：{mode} {cfg.target} 进 {sheet.branch!r} 时冲突，已恢复原状"]
+        if not restored:
+            lines.append(f"warning: HEAD 现为 {gitops.rev_parse('HEAD', cwd=worktree)[:12]}")
+        if conflicts:
+            lines.append("冲突文件：")
+            lines.extend(f"  - {path}" for path in conflicts)
+        detail = proc.stderr.strip()
+        if detail:
+            lines.append(f"git 输出：{detail}")
+        raise CheckError("\n".join(lines))
+
+    after = gitops.rev_parse("HEAD", cwd=worktree)
+    print(
+        f"已把 {cfg.target} 的 {behind} 个提交 {mode} 进 {sheet.branch!r}"
+        f"（{before[:12]} → {after[:12]}）"
+    )
+    if mode == "rebase":
+        upstream = gitops.upstream_name(sheet.branch, cwd=worktree)
+        remote_ref = upstream or gitops.remote_tracking_name(
+            sheet.branch, cwd=worktree
+        )
+        if remote_ref:
+            print(
+                f"分支已在远端（{remote_ref}），rebase 后需要由 agent 执行 "
+                "force-with-lease：git push --force-with-lease"
+            )
     return 0
 
 
@@ -1053,7 +1167,19 @@ def cmd_status(args: argparse.Namespace) -> int:
         headers = ("ID", "STATUS", "AGENT", "TITLE", "BRANCH", "AHEAD/BEHIND", "FILES", "DIRTY", "VIOL", "IDLE", "TEST", "READY")
         print(_render_columns(headers, [_status_cells(row) for row in rows]))
         print("  ".join(f"{status}: {summary[status]}" for status in STATUSES))
+        _print_sync_hint(rows)
     return 0
+
+
+def _print_sync_hint(rows: list[dict]) -> None:
+    """Suggest `atb sync` for the first three tasks behind the target."""
+    behind = [row for row in rows if (row.get("behind") or 0) > 0]
+    if not behind:
+        return
+    shown = behind[:3]
+    ids = "、".join(row["id"] for row in shown)
+    note = f"（共 {len(behind)} 个）" if len(behind) > len(shown) else ""
+    print(f"sync 建议{note}：{ids}（分支落后目标，运行 atb sync <ID> 更新）")
 
 
 # --------------------------------------------------------------------------- #
@@ -1990,6 +2116,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_prompt.add_argument("--lang", choices=["zh", "en"], default="zh", help="prompt language")
     p_prompt.add_argument("--json", action="store_true")
     p_prompt.set_defaults(func=cmd_prompt)
+
+    p_sync = sub.add_parser(
+        "sync", help="bring a task branch up to date with the target"
+    )
+    p_sync.add_argument("id", help="task id, e.g. T001")
+    sync_mode = p_sync.add_mutually_exclusive_group()
+    sync_mode.add_argument(
+        "--rebase", action="store_true",
+        help="rebase the task branch onto the target (the default)",
+    )
+    sync_mode.add_argument(
+        "--merge", action="store_true",
+        help="merge the target into the task branch instead of rebasing",
+    )
+    p_sync.add_argument(
+        "--dry-run", action="store_true",
+        help="predict conflicts with git merge-tree; change nothing",
+    )
+    p_sync.set_defaults(func=cmd_sync)
 
     p_check = sub.add_parser("check", help="scope-check a task's changes")
     p_check.add_argument("id", help="task id, e.g. T001")

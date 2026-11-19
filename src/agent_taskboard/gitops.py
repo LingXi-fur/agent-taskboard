@@ -236,6 +236,46 @@ def merge_abort(cwd: str | Path | None = None) -> None:
     _run(["merge", "--abort"], cwd=cwd, check=False)
 
 
+def rebase(target: str, cwd: str | Path | None = None) -> subprocess.CompletedProcess:
+    """Run ``git rebase <target>`` without raising."""
+    return _run(["rebase", target], cwd=cwd, check=False)
+
+
+def rebase_abort(cwd: str | Path | None = None) -> None:
+    """Abort an in-progress rebase (best effort; ignores failures)."""
+    _run(["rebase", "--abort"], cwd=cwd, check=False)
+
+
+def merge_branch(
+    target: str, cwd: str | Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run ``git merge <target> --no-edit`` without raising."""
+    return _run(["merge", target, "--no-edit"], cwd=cwd, check=False)
+
+
+def conflicted_files(cwd: str | Path | None = None) -> list[str]:
+    """Return the unmerged paths of an in-progress rebase or merge."""
+    proc = _run(
+        ["diff", "--name-only", "--diff-filter=U"], cwd=cwd, check=False
+    )
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def remote_tracking_name(
+    branch: str, cwd: str | Path | None = None
+) -> str | None:
+    """Return the remote-tracking ref (``origin/<branch>``) if one exists."""
+    proc = _run(
+        ["for-each-ref", "refs/remotes", "--format=%(refname:short)"],
+        cwd=cwd,
+        check=False,
+    )
+    for name in proc.stdout.split():
+        if name.endswith("/" + branch):
+            return name
+    return None
+
+
 def worktree_remove(path: str | Path, cwd: str | Path | None = None) -> None:
     """Remove a worktree; refuses (``GitError``) when it has local changes."""
     _run(["worktree", "remove", str(path)], cwd=cwd)
