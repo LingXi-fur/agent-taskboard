@@ -48,8 +48,13 @@ EOF
 git add .
 git commit -m "chore: initial demo repo" -q
 
+# Pick an interpreter that exists: python3 on POSIX, python on some Windows
+# Git Bash setups that only expose ``python``.
+PYTHON="${PYTHON:-python3}"
+command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
+
 atb() {
-  PYTHONPATH="$ATB_SRC" python3 -m agent_taskboard "$@"
+  PYTHONPATH="$ATB_SRC" "$PYTHON" -m agent_taskboard "$@"
 }
 
 echo "=== 1. atb init ==="
