@@ -30,6 +30,7 @@ from .sheet import (
     dump,
     extract_section,
     next_id,
+    normalize_body,
     parse,
     slugify,
     to_dict,
@@ -189,11 +190,73 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_body_argument(value: str) -> str:
+    """Read a ``--body`` value: ``-`` is stdin, ``@FILE`` is UTF-8, else literal."""
+    if value == "-":
+        buffer = getattr(sys.stdin, "buffer", None)
+        if buffer is not None:
+            return buffer.read().decode("utf-8", errors="replace")
+        return sys.stdin.read()
+    if value.startswith("@"):
+        path = Path(value[1:])
+        if not path.is_file():
+            raise AtbError(f"body file {path} not found")
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise AtbError(f"body file {path} is not valid UTF-8: {exc}") from exc
+        except OSError as exc:
+            raise AtbError(f"cannot read body file {path}: {exc}") from exc
+    return value
+
+
+def _copy_directory(copy_to: str | None) -> Path | None:
+    """Validate ``--copy-to`` and return it; never creates the directory."""
+    if not copy_to:
+        return None
+    directory = Path(copy_to)
+    if not directory.exists():
+        raise AtbError(f"--copy-to directory {directory} does not exist")
+    if not directory.is_dir():
+        raise AtbError(f"--copy-to path {directory} is not a directory")
+    return directory
+
+
+def _dump_checked(sheet: Sheet) -> str:
+    """Serialize ``sheet`` and refuse to return text that would not parse."""
+    try:
+        text = dump(sheet)
+        parse(text)
+    except SheetError as exc:
+        raise AtbError(f"refusing to write an invalid task sheet: {exc}") from exc
+    return text
+
+
+def _copy_sheet(path: Path, copy_dir: Path | None, task_id: str) -> Path | None:
+    """Copy a freshly written sheet to ``DIR/ATB_TASK_<ID>.md``."""
+    if copy_dir is None:
+        return None
+    destination = copy_dir / f"ATB_TASK_{task_id}.md"
+    try:
+        shutil.copyfile(path, destination)
+    except OSError as exc:
+        raise AtbError(
+            f"wrote {path} but could not copy it to {destination}: {exc}"
+        ) from exc
+    return destination
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
     cfg = config.load_config(repo_root)
     tasks_dir = _tasks_dir(repo_root)
+
+    body = TEMPLATE_BODY
+    if args.body is not None:
+        body = normalize_body(_read_body_argument(args.body))
+    copy_dir = _copy_directory(args.copy_to)
+
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
     for dep in args.depends:
@@ -210,19 +273,82 @@ def cmd_new(args: argparse.Namespace) -> int:
         deny=list(args.deny),
         depends=list(args.depends),
         created=datetime.now(timezone.utc).replace(microsecond=0),
-        body=TEMPLATE_BODY,
+        body=body,
     )
     path = tasks_dir / f"{task_id}.md"
-    path.write_text(dump(sheet), encoding="utf-8")
+    path.write_text(_dump_checked(sheet), encoding="utf-8")
+    copy_path = _copy_sheet(path, copy_dir, task_id)
 
     if args.json:
-        print(json.dumps({
+        payload = {
             "id": task_id,
             "path": str(path),
             "title": args.title,
-        }, ensure_ascii=False))
+        }
+        if copy_path is not None:
+            payload["copy_path"] = str(copy_path)
+        print(json.dumps(payload, ensure_ascii=False))
     else:
         print(str(path))
+        if copy_path is not None:
+            print(f"copied to {copy_path}")
+    return 0
+
+
+def cmd_edit(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    sheet = _load_task(repo_root, args.id)
+
+    if sheet.status in ("done", "dropped"):
+        raise AtbError(
+            f"task {args.id} has status {sheet.status!r}; "
+            "done/dropped tasks cannot be edited"
+        )
+
+    copy_dir = _copy_directory(args.copy_to)
+
+    changed = False
+    if args.body is not None:
+        sheet.body = normalize_body(_read_body_argument(args.body))
+        changed = True
+    if args.title is not None:
+        sheet.title = args.title
+        changed = True
+    if args.agent is not None:
+        sheet.agent = args.agent
+        changed = True
+
+    if args.remove_allow:
+        removed = set(args.remove_allow)
+        sheet.allow = [glob for glob in sheet.allow if glob not in removed]
+        changed = True
+    if args.remove_deny:
+        removed = set(args.remove_deny)
+        sheet.deny = [glob for glob in sheet.deny if glob not in removed]
+        changed = True
+    for glob in args.add_allow:
+        if not glob:
+            raise AtbError("--add-allow values must not be empty")
+        if glob not in sheet.allow:
+            sheet.allow.append(glob)
+        changed = True
+    for glob in args.add_deny:
+        if not glob:
+            raise AtbError("--add-deny values must not be empty")
+        if glob not in sheet.deny:
+            sheet.deny.append(glob)
+        changed = True
+
+    path = _tasks_dir(repo_root) / f"{sheet.id}.md"
+    if changed:
+        sheet.body = normalize_body(sheet.body)
+        path.write_text(_dump_checked(sheet), encoding="utf-8")
+    copy_path = _copy_sheet(path, copy_dir, sheet.id)
+
+    print(str(path))
+    if copy_path is not None:
+        print(f"copied to {copy_path}")
     return 0
 
 
@@ -1797,8 +1923,50 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--allow", action="append", default=[], help="allowed glob (repeatable)")
     p_new.add_argument("--deny", action="append", default=[], help="denied glob (repeatable)")
     p_new.add_argument("--depends", action="append", default=[], help="dependency task id (repeatable)")
+    p_new.add_argument(
+        "--body",
+        metavar="@FILE|-",
+        help="body text; @FILE reads a UTF-8 file, - reads stdin (default: template)",
+    )
+    p_new.add_argument(
+        "--copy-to",
+        metavar="DIR",
+        help="copy the finished sheet to DIR/ATB_TASK_<ID>.md (DIR must exist)",
+    )
     p_new.add_argument("--json", action="store_true")
     p_new.set_defaults(func=cmd_new)
+
+    p_edit = sub.add_parser("edit", help="edit a task sheet without hand-editing TOML")
+    p_edit.add_argument("id", help="task id, e.g. T001")
+    p_edit.add_argument(
+        "--body",
+        metavar="@FILE|-",
+        help="replace the body; @FILE reads a UTF-8 file, - reads stdin",
+    )
+    p_edit.add_argument("--title", help="replace the title")
+    p_edit.add_argument("--agent", help="replace the agent name")
+    p_edit.add_argument(
+        "--add-allow", action="append", default=[], metavar="GLOB",
+        help="add an allowed glob (repeatable)",
+    )
+    p_edit.add_argument(
+        "--remove-allow", action="append", default=[], metavar="GLOB",
+        help="remove an allowed glob (repeatable)",
+    )
+    p_edit.add_argument(
+        "--add-deny", action="append", default=[], metavar="GLOB",
+        help="add a denied glob (repeatable)",
+    )
+    p_edit.add_argument(
+        "--remove-deny", action="append", default=[], metavar="GLOB",
+        help="remove a denied glob (repeatable)",
+    )
+    p_edit.add_argument(
+        "--copy-to",
+        metavar="DIR",
+        help="copy the finished sheet to DIR/ATB_TASK_<ID>.md (DIR must exist)",
+    )
+    p_edit.set_defaults(func=cmd_edit)
 
     p_list = sub.add_parser("list", help="list task sheets")
     p_list.add_argument("--status", help="only show tasks with this status")
