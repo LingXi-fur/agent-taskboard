@@ -346,6 +346,25 @@ def slugify(title: str, fallback: str = "") -> str:
 # Markdown body helpers
 # --------------------------------------------------------------------------- #
 
+def normalize_body(body: str) -> str:
+    """Normalize a Markdown body for storage in a task sheet.
+
+    The serialized sheet must have exactly one blank line between the closing
+    ``+++`` fence and the body, and the file must end with a single newline.
+    ``dump`` writes the closing fence as ``+++\\n`` followed by ``body``, so a
+    normalized body starts with exactly one ``\\n`` and ends with one ``\\n``.
+    """
+    text = body.replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return "\n"
+    return "\n" + "\n".join(lines) + "\n"
+
+
 def extract_section(body: str, heading: str) -> str:
     """Return the Markdown section starting at ``heading`` (e.g. ``## 验收``).
 
