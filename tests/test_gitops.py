@@ -25,7 +25,7 @@ def _git(tmp: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
         cwd=str(tmp),
         env=_env(str(tmp)),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=check,
     )
 

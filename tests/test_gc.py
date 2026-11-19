@@ -32,7 +32,7 @@ class GcTests(unittest.TestCase):
             cwd=str(cwd),
             env=self._env(cwd),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=check,
         )
 
@@ -42,7 +42,7 @@ class GcTests(unittest.TestCase):
             cwd=str(cwd),
             env=self._env(cwd),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup_repo(self, tmp: Path) -> Path:

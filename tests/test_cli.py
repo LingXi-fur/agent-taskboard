@@ -29,7 +29,7 @@ class CliTests(unittest.TestCase):
             env=self._env(str(tmp)),
             check=True,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
 
     def _atb(self, tmp: Path, *argv: str) -> subprocess.CompletedProcess:
@@ -38,7 +38,7 @@ class CliTests(unittest.TestCase):
             cwd=str(tmp),
             env=self._env(str(tmp)),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
 
     def test_init_new_list_show_roundtrip(self):

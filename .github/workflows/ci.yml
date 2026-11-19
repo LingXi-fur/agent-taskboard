@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,10 +13,15 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # Use bash everywhere (Git Bash on Windows) so PYTHONPATH=... and heredocs
+    # work the same on every runner.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
@@ -78,13 +84,20 @@ jobs:
           python -m build
           python -m twine check --strict dist/*
           python -m venv .pkg-venv
-          .pkg-venv/bin/python -m pip install dist/*.whl
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            VENV_PY=.pkg-venv/Scripts/python.exe
+            VENV_ATB=.pkg-venv/Scripts/atb.exe
+          else
+            VENV_PY=.pkg-venv/bin/python
+            VENV_ATB=.pkg-venv/bin/atb
+          fi
+          "$VENV_PY" -m pip install dist/*.whl
           EXPECTED=$(python - <<'PY'
           import tomllib
           print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])
           PY
           )
-          ACTUAL=$(.pkg-venv/bin/atb --version)
+          ACTUAL=$("$VENV_ATB" --version)
           echo "expected: atb $EXPECTED"
           echo "actual:   $ACTUAL"
           test "$ACTUAL" = "atb $EXPECTED"

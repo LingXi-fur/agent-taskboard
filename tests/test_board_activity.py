@@ -38,7 +38,7 @@ class BoardActivityTests(unittest.TestCase):
             cwd=str(cwd),
             env=self._env(cwd, env_extra),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
         )
 
@@ -48,7 +48,7 @@ class BoardActivityTests(unittest.TestCase):
             cwd=str(repo),
             env=self._env(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup(self, base: Path) -> Path:
