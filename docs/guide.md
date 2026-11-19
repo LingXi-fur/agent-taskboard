@@ -115,12 +115,12 @@ Real `atb status` output (with the `READY` column showing merge readiness and an
 ```text
 main: no upstream
 ID    STATUS  AGENT     TITLE              BRANCH                      AHEAD/BEHIND  FILES  DIRTY  VIOL  IDLE  TEST  READY
-T001  doing   claude    Update greeting    claude/update-greeting      +1/-0         1      0      1     0s    —     ✗ scope_violation
-T002  doing   opencode  Localize greeting  opencode/localize-greeting  +1/-0         1      0      0     0s    ✓     ✓
-todo: 0  doing: 2  review: 0  rework: 0  done: 0  dropped: 0
+T001  review  claude    Update greeting    claude/update-greeting      +1/-0         1      0      1     1s    —     ✗ scope_violation
+T002  review  opencode  Localize greeting  opencode/localize-greeting  +1/-0         1      0      0     0s    ✓     ✓
+todo: 0  doing: 0  review: 2  rework: 0  done: 0  dropped: 0
 ```
 
-- `READY` is computed for `review` tasks (including `merge-tree` conflict checks against `target`) and `doing` tasks that already have commits: `✓` when merge-ready, `✗ <code>` showing the first blocker otherwise, or `—` when not yet applicable.
+- `READY` is computed for `review` tasks (including `merge-tree` conflict checks against `target` and active-task conflicts): `✓` when merge-ready, `✗ <code>` showing the first blocker otherwise. Non-`review` tasks (`todo`, `doing`, `rework`, `done`, `dropped`) show `—` (`ready: null`).
 - In `atb board --html`, the `Ready` / `可合并` column uses the same logic and shows the full `blockers` list on hover in the selected `--lang`.
 - `atb status --json` adds `ready` (`true` / `false` / `null`) and `blockers` to each item under `tasks` without changing top-level keys (`tasks`, `summary`).
 
@@ -229,6 +229,7 @@ Use `--json` when scripts or orchestrators need to decide programmatically wheth
 
 | Code | Meaning |
 |---|---|
+| `missing_branch` | Task branch or worktree is missing or unreadable |
 | `scope_violation` | Committed or uncommitted changes hit `denied` or `outside` paths |
 | `uncommitted` | Worktree still has uncommitted changes |
 | `test_not_passed` | Latest test record is missing or non-zero exit |

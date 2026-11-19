@@ -258,7 +258,7 @@ class BoardReviewTests(unittest.TestCase):
                 set(data["tasks"][0]),
                 {"id", "status", "agent", "title", "branch", "missing",
                  "ahead", "behind", "changed_files", "violations", "test",
-                 "dirty", "idle_seconds"},
+                 "dirty", "idle_seconds", "ready", "blockers"},
             )
             self.assertIn("doing", data["summary"])
 

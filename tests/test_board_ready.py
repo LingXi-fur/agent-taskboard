@@ -133,7 +133,7 @@ class BoardReadyTests(unittest.TestCase):
             self._git(repo, "add", "src/d.py")
             self._git(repo, "commit", "-qm", "main diverges on d.py")
 
-            # T005: doing with commit -> shown as ready or blocker; T006: todo -> ready=None ("—")
+            # T005: doing with commit -> NOT evaluated (shows "—", ready=None); T006: todo -> ready=None ("—")
             t5, wt5 = self._new_and_start(repo, "Doing with commit")
             (wt5 / "src" / "extra.py").write_text("e\n", encoding="utf-8")
             self._git(wt5, "add", "-A")
@@ -163,7 +163,8 @@ class BoardReadyTests(unittest.TestCase):
             self.assertIs(by_id[t4]["ready"], False)
             self.assertEqual([b["code"] for b in by_id[t4]["blockers"]], ["merge_conflict"])
 
-            self.assertIs(by_id[t5]["ready"], True)
+            self.assertIsNone(by_id[t5]["ready"])
+            self.assertEqual(by_id[t5]["blockers"], [])
             self.assertIsNone(by_id[t6]["ready"])
             self.assertEqual(by_id[t6]["blockers"], [])
 
@@ -176,7 +177,7 @@ class BoardReadyTests(unittest.TestCase):
             self.assertIn("✗ test_not_passed", lines[t2])
             self.assertIn("✗ uncommitted", lines[t3])
             self.assertIn("✗ merge_conflict", lines[t4])
-            self.assertIn("✓", lines[t5])
+            self.assertTrue(lines[t5].rstrip().endswith("—"))
             self.assertTrue(lines[t6].rstrip().endswith("—"))
 
             # 3) Make T002 ALSO dirty so hover shows multiple blockers in zh and en
@@ -207,6 +208,74 @@ class BoardReadyTests(unittest.TestCase):
             t2_row_en = re.search(rf"<tr[^>]*><td>{t2}</td>.*?</tr>", en_html, re.S).group(0)
             self.assertIn("uncommitted changes:", t2_row_en)
             self.assertIn("last test run did not pass or has no record", t2_row_en)
+
+    def test_cross_task_conflict_consistent_across_status_board_and_review_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+
+            t1, wt1 = self._new_and_start(repo, "Conflict A")
+            (wt1 / "src" / "a.py").write_text("edit-by-t1\n", encoding="utf-8")
+            self._git(wt1, "add", "-A")
+            self._git(wt1, "commit", "-qm", "t1 edit")
+            self._write_test_run(repo, t1, 0)
+            self._mark_review(repo, t1)
+
+            t2, wt2 = self._new_and_start(repo, "Conflict B")
+            (wt2 / "src" / "a.py").write_text("edit-by-t2\n", encoding="utf-8")
+            self._git(wt2, "add", "-A")
+            self._git(wt2, "commit", "-qm", "t2 edit")
+            self._write_test_run(repo, t2, 0)
+            self._mark_review(repo, t2)
+
+            # 1) status --json and status table
+            st_json = json.loads(self._atb(repo, "status", "--json").stdout)
+            by_id = {r["id"]: r for r in st_json["tasks"]}
+            st_txt = self._atb(repo, "status").stdout
+            lines = {line.split()[0]: line for line in st_txt.splitlines() if line.startswith("T")}
+
+            # 2) board --html
+            board_out = base / "board.html"
+            self.assertEqual(
+                self._atb(repo, "board", "--html", str(board_out), "--lang", "en").returncode, 0
+            )
+            board_html = board_out.read_text(encoding="utf-8")
+
+            # 3) review --json for each task
+            for tid in (t1, t2):
+                rev = json.loads(self._atb(repo, "review", tid, "--json", "--lang", "en").stdout)
+                self.assertIs(by_id[tid]["ready"], False)
+                self.assertIs(rev["ready"], False)
+                self.assertEqual([b["code"] for b in by_id[tid]["blockers"]], ["merge_conflict"])
+                self.assertEqual([b["code"] for b in rev["blockers"]], ["merge_conflict"])
+                self.assertIn("✗ merge_conflict", lines[tid])
+                row_html = re.search(rf"<tr[^>]*><td>{tid}</td>.*?</tr>", board_html, re.S).group(0)
+                self.assertIn("✗ merge_conflict", row_html)
+
+    def test_review_missing_branch_reports_missing_branch_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            t1, wt1 = self._new_and_start(repo, "Missing branch task")
+            self._write_test_run(repo, t1, 0)
+            self._mark_review(repo, t1)
+            branch = sheet_mod.parse(
+                (repo / ".taskboard" / "tasks" / f"{t1}.md").read_text(encoding="utf-8")
+            ).branch
+            self._git(repo, "worktree", "remove", str(wt1))
+            self._git(repo, "branch", "-D", branch)
+
+            st_json = json.loads(self._atb(repo, "status", "--json").stdout)
+            row = st_json["tasks"][0]
+            self.assertIs(row["ready"], False)
+            self.assertEqual([b["code"] for b in row["blockers"]], ["missing_branch"])
+
+            st_txt = self._atb(repo, "status").stdout
+            self.assertIn("✗ missing_branch", st_txt)
+
+            board_out = base / "board.html"
+            self.assertEqual(self._atb(repo, "board", "--html", str(board_out)).returncode, 0)
+            self.assertIn("✗ missing_branch", board_out.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

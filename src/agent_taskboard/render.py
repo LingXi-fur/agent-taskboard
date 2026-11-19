@@ -240,11 +240,21 @@ def evaluate_readiness(
     target_merge_error: str | None = None,
     conflicts: list[dict] | tuple[dict, ...] = (),
     doctor_fails: list[str] | tuple[str, ...] = (),
+    missing_reason: str | None = None,
     lang: str = "zh",
 ) -> tuple[bool, list[dict[str, str]]]:
     """Compute ``(ready, blockers)`` from pre-collected review/board inputs."""
     zh = lang != "en"
     blockers: list[dict[str, str]] = []
+    if missing_reason:
+        blockers.append({
+            "code": "missing_branch",
+            "message": (
+                f"分支或 worktree 缺失：{missing_reason}"
+                if zh
+                else f"branch or worktree missing: {missing_reason}"
+            ),
+        })
     if denied or outside:
         viol_paths = ", ".join(list(denied) + list(outside))
         blockers.append({
@@ -600,16 +610,16 @@ def _task_row_html(
         idle_cell = _cell(idle_text)
     test_mark = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
     ready = row.get("ready")
-    blockers = row.get("blockers") or []
-    if ready is True:
+    if ready is None:
+        ready_cell = _cell("—")
+    elif ready is True:
         ready_cell = '<td class="ready-ok">✓</td>'
-    elif ready is False:
+    else:
+        blockers = row.get("blockers") or []
         first_code = blockers[0]["code"] if blockers else "blocked"
         tooltip = "\n".join(f"{b['code']}: {b['message']}" for b in blockers)
         title_attr = f' title="{_esc(tooltip)}"' if tooltip else ""
         ready_cell = f'<td class="ready-bad"{title_attr}>✗ {_esc(first_code)}</td>'
-    else:
-        ready_cell = _cell("—")
     row_attr = ' class="stall-row"' if stalled else ""
     status_label = i18n["statuses"].get(row["status"], row["status"])
     return (

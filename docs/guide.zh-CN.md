@@ -115,12 +115,12 @@ atb board --html board.html --lang zh --stall 120
 ```text
 main: no upstream
 ID    STATUS  AGENT     TITLE              BRANCH                      AHEAD/BEHIND  FILES  DIRTY  VIOL  IDLE  TEST  READY
-T001  doing   claude    Update greeting    claude/update-greeting      +1/-0         1      0      1     0s    —     ✗ scope_violation
-T002  doing   opencode  Localize greeting  opencode/localize-greeting  +1/-0         1      0      0     0s    ✓     ✓
-todo: 0  doing: 2  review: 0  rework: 0  done: 0  dropped: 0
+T001  review  claude    Update greeting    claude/update-greeting      +1/-0         1      0      1     1s    —     ✗ scope_violation
+T002  review  opencode  Localize greeting  opencode/localize-greeting  +1/-0         1      0      0     0s    ✓     ✓
+todo: 0  doing: 0  review: 2  rework: 0  done: 0  dropped: 0
 ```
 
-- `READY` 列对所有 `review` 任务（包含向目标分支的 `merge-tree` 冲突检测）以及已有提交的 `doing` 任务生效：可合并显示 `✓`，否则显示 `✗ <第一个 blocker 代码>`，尚未适用显示 `—`。
+- `READY` 列仅针对 `review` 状态任务计算（含对目标分支的 `merge-tree` 冲突检测及与其他活跃任务的冲突检测）：可合并显示 `✓`，否则显示 `✗ <第一个 blocker 代码>`；其余状态（`todo`、`doing`、`rework`、`done`、`dropped`）一律显示 `—`（`ready` 为 `null`）。
 - 在 `atb board --html` 中，`可合并` / `Ready` 列复用同一套判断，鼠标悬停可查看完整 `blockers` 列表（语言随 `--lang` 切换）。
 - `atb status --json` 会在 `tasks` 的每一行增加 `ready`（`true` / `false` / `null`）和 `blockers` 字段，顶层键（`tasks`、`summary`）保持不变。
 
@@ -229,6 +229,7 @@ atb review T001 --lang zh
 
 | 代码 | 含义 |
 |---|---|
+| `missing_branch` | 任务分支或 worktree 缺失或无法读取 |
 | `scope_violation` | 已提交或未提交改动命中 `denied` 或超出 `allow` 范围 |
 | `uncommitted` | worktree 仍有未提交改动 |
 | `test_not_passed` | 最近一次测试未通过或无测试记录 |
