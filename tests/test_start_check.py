@@ -274,7 +274,7 @@ class StartPromptCheckTests(unittest.TestCase):
 
             result = self._atb(tmp, "prompt", "T001", "--lang", "zh")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn(str(wt), result.stdout)
+            self.assertIn(str(wt.resolve()), result.stdout)
             self.assertIn("不要 push", result.stdout)
             self.assertIn("src/**", result.stdout)
             self.assertIn("DESIGN.md", result.stdout)
@@ -286,7 +286,7 @@ class StartPromptCheckTests(unittest.TestCase):
             result = self._atb(tmp, "prompt", "T001", "--json")
             data = json.loads(result.stdout)
             self.assertEqual(set(data), {"text", "worktree", "branch"})
-            self.assertIn(str(wt), data["worktree"])
+            self.assertIn(str(wt.resolve()), data["worktree"])
             self.assertEqual(data["branch"], "opencode/t001")
 
     def test_prompt_rework_section_first(self):

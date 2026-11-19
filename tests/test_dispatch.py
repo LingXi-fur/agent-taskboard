@@ -84,7 +84,7 @@ class DispatchTests(unittest.TestCase):
             self.assertIn("start T001", out)  # todo: start before prompt
             self.assertIn("按交接文本执行", out)
             self.assertIn("被打回了", out)
-            self.assertIn(str(repo), out)
+            self.assertIn(str(repo.resolve()), out)
 
     def test_dispatch_todo_vs_doing_wording(self):
         with tempfile.TemporaryDirectory() as tmp:
