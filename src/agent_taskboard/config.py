@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "test_timeout": 1800,
     "merge_message": "Merge {branch} ({id}: {title})",
     "isolate_home": False,
+    "require_ready_for_done": True,
 }
 
 #: The known keys and the type each one must have.
@@ -40,6 +41,7 @@ TYPES: dict[str, type] = {
     "test_timeout": int,
     "merge_message": str,
     "isolate_home": bool,
+    "require_ready_for_done": bool,
 }
 
 #: Text written by ``atb init`` when no config exists yet.
@@ -52,6 +54,7 @@ id_prefix = "T"
 test_timeout = 1800
 merge_message = "Merge {branch} ({id}: {title})"
 isolate_home = false
+require_ready_for_done = true
 """
 
 
@@ -102,6 +105,7 @@ class Config:
     test_timeout: int = DEFAULTS["test_timeout"]
     merge_message: str = DEFAULTS["merge_message"]
     isolate_home: bool = DEFAULTS["isolate_home"]
+    require_ready_for_done: bool = DEFAULTS["require_ready_for_done"]
     extra: dict[str, Any] = field(default_factory=dict)
     repo_root: Path = field(default_factory=Path)
     config_path: Path = field(default_factory=Path)
@@ -143,6 +147,7 @@ def load_config(repo_root: str | os.PathLike) -> Config:
         test_timeout=merged["test_timeout"],
         merge_message=merged["merge_message"],
         isolate_home=merged["isolate_home"],
+        require_ready_for_done=merged["require_ready_for_done"],
         extra=extra,
         repo_root=repo_root,
         config_path=config_path,

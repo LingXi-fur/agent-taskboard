@@ -140,23 +140,36 @@ echo "=== 11. atb dispatch (forwarding checklist) ==="
 atb dispatch
 
 echo
-echo "=== 12. atb review T002 & atb done T002 --merge (keep worktree for gc demo) ==="
+echo "=== 12. atb review T002; done --merge refuses while T001 still conflicts ==="
 atb review T002 >/dev/null
 git add .taskboard/tasks/T002.md
 git commit -m "chore: mark T002 review" -q
+atb done T002 --merge || true
+
+echo
+echo "=== 13. T001 applies the rework; done T002 --merge now succeeds ==="
+cat > "$WT1/src/app.py" <<'EOF'
+def greet(name: str) -> str:
+    return f"你好, {name}!"
+EOF
+cat > "$WT1/src/core.py" <<'EOF'
+VERSION = "0.1.0"
+EOF
+git -C "$WT1" add src/app.py src/core.py
+git -C "$WT1" commit -m "fix: apply the rework note (match localized greeting)" -q
 atb done T002 --merge
 git add .taskboard/tasks/T002.md
 git commit -m "chore: mark T002 done" -q
 
 echo
-echo "=== 13. atb gc (dry-run preview) ==="
+echo "=== 14. atb gc (dry-run preview) ==="
 atb gc
 
 echo
-echo "=== 14. atb doctor (health check) ==="
+echo "=== 15. atb doctor (health check) ==="
 atb doctor
 
 echo
-echo "=== 15. atb gc --apply & atb log T002 ==="
+echo "=== 16. atb gc --apply & atb log T002 ==="
 atb gc --apply
 atb log T002

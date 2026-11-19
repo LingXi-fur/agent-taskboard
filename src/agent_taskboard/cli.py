@@ -1238,14 +1238,12 @@ def _structured_diffstat(base: str, branch: str, repo_root: Path) -> dict:
     }
 
 
-def _build_review_json(
-    sheet: Sheet, cfg: config.Config, repo_root: Path, lang: str = "zh"
-) -> str:
+def _review_info_with_target(
+    sheet: Sheet, cfg: config.Config, repo_root: Path
+) -> dict:
+    """``_review_info`` plus the target-conflict inputs readiness needs."""
     info = _review_info(sheet, cfg, repo_root)
     info["target"] = cfg.target
-    info["structured_diffstat"] = _structured_diffstat(
-        sheet.base, sheet.branch, repo_root
-    )
     try:
         info["target_conflicts"] = gitops.merge_tree_conflicts(
             cfg.target, sheet.branch, cwd=repo_root
@@ -1254,6 +1252,16 @@ def _build_review_json(
     except gitops.GitError as exc:
         info["target_conflicts"] = []
         info["target_merge_error"] = str(exc)
+    return info
+
+
+def _build_review_json(
+    sheet: Sheet, cfg: config.Config, repo_root: Path, lang: str = "zh"
+) -> str:
+    info = _review_info_with_target(sheet, cfg, repo_root)
+    info["structured_diffstat"] = _structured_diffstat(
+        sheet.base, sheet.branch, repo_root
+    )
     payload = render.build_review_json(info, lang=lang)
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
 
@@ -1361,6 +1369,57 @@ def _done_blockers(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[st
     return blockers
 
 
+def _done_readiness(
+    sheet: Sheet, cfg: config.Config, repo_root: Path
+) -> list[dict[str, str]]:
+    """Readiness blockers for ``done --merge``.
+
+    Uses the exact same inputs as ``review --json`` (``_review_info`` plus the
+    target-conflict probe), so the READY column, review and merge can never
+    disagree about what "ready" means.
+    """
+    _, blockers = render.readiness_from_info(
+        _review_info_with_target(sheet, cfg, repo_root)
+    )
+    return blockers
+
+
+def _format_blockers(blockers: list[dict[str, str]]) -> list[str]:
+    return [f"[{item['code']}] {item['message']}" for item in blockers]
+
+
+def _test_config_hint(
+    repo_root: Path, sheet: Sheet, blockers: list[dict[str, str]]
+) -> str | None:
+    """Explain ``test_not_passed`` when the repo may have no test command."""
+    if not any(item["code"] == "test_not_passed" for item in blockers):
+        return None
+    if sheet.test:
+        return None
+    if (repo_root / ".taskboard" / "runs" / f"{sheet.id}.jsonl").exists():
+        return None
+    return (
+        f"{sheet.id} 的 test 字段为空且从未跑过测试：先运行 "
+        f"'atb check {sheet.id} --test'，或在任务单的 test 字段里填写测试命令"
+    )
+
+
+def _report_merge_blockers(
+    repo_root: Path,
+    sheet: Sheet,
+    blockers: list[dict[str, str]],
+    *,
+    header: str,
+) -> None:
+    """Print a blocker list (warnings only; the merge itself is not stopped)."""
+    print(header, file=sys.stderr)
+    for line in _format_blockers(blockers):
+        print(f"  - {line}", file=sys.stderr)
+    hint = _test_config_hint(repo_root, sheet, blockers)
+    if hint:
+        print(f"  提示：{hint}", file=sys.stderr)
+
+
 def cmd_done(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
@@ -1392,15 +1451,44 @@ def cmd_done(args: argparse.Namespace) -> int:
     if not sheet.base or not sheet.branch:
         raise AtbError(f"task {args.id} not started (no base/branch)")
 
-    blockers = _done_blockers(sheet, cfg, repo_root)
-    if blockers:
-        raise CheckError("cannot mark done: " + "; ".join(blockers))
-
     if not args.merge:
+        blockers = _done_blockers(sheet, cfg, repo_root)
+        if blockers:
+            raise CheckError("cannot mark done: " + "; ".join(blockers))
         _write_status(repo_root, sheet, "done")
         print(f"marked {sheet.id} done; merge branch {sheet.branch!r} yourself (never pushed)")
         print(f"task sheet updated; commit it yourself (not auto-committed)")
         return 0
+
+    # --merge readiness: same evaluate_readiness as `review --json`.
+    # Nothing is written or merged when the task is blocked; --force overrides
+    # (and lists what it ignored), and require_ready_for_done = false downgrades
+    # the refusal to a warning.
+    merge_blockers = _done_readiness(sheet, cfg, repo_root)
+    if merge_blockers:
+        if args.force:
+            _report_merge_blockers(
+                repo_root, sheet, merge_blockers,
+                header="已忽略的 blocker（--force）：",
+            )
+        elif cfg.require_ready_for_done:
+            lines = "\n".join(
+                f"  - {line}" for line in _format_blockers(merge_blockers)
+            )
+            message = (
+                f"task {args.id} is not ready; refusing to merge "
+                f"(--force ignores this):\n{lines}"
+            )
+            hint = _test_config_hint(repo_root, sheet, merge_blockers)
+            if hint:
+                message += f"\n  提示：{hint}"
+            raise CheckError(message)
+        else:
+            _report_merge_blockers(
+                repo_root, sheet, merge_blockers,
+                header="warning: task is not ready "
+                       "(require_ready_for_done = false); merging anyway:",
+            )
 
     # --merge preconditions
     if not gitops.is_main_worktree(repo_root):
@@ -2028,7 +2116,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_done.add_argument("id", help="task id, e.g. T001")
     p_done.add_argument("--merge", action="store_true", help="merge the branch into target with --no-ff")
     p_done.add_argument("--clean", action="store_true", help="remove worktree and branch after merging (needs --merge)")
-    p_done.add_argument("--force", action="store_true", help="allow finishing a 'doing' task (never skips scope checks)")
+    p_done.add_argument(
+        "--force", action="store_true",
+        help="allow finishing a 'doing' task; with --merge also ignore not-ready "
+             "blockers (they are listed; plain 'done' still never skips scope checks)",
+    )
     push_group = p_done.add_mutually_exclusive_group()
     push_group.add_argument("--push", action="store_true", help="push the target branch after merging (needs --merge)")
     push_group.add_argument("--no-push", action="store_true", help="do not push even if push_after_done is enabled")
