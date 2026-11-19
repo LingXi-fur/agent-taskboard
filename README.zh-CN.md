@@ -121,15 +121,15 @@ created = 2026-11-14T08:00:00Z
 | `atb start ID [--base REV] [--force]` | 校验依赖、创建独立 worktree，并将 `base` 和 `branch` 写回任务单 | 已实现 |
 | `atb prompt ID [--lang zh\|en]` | 生成完整交接文本（有返工时返工置顶，后接范围与任务正文） | 已实现 |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | 校验已提交与未提交改动的范围，可选在隔离的临时 `HOME` 中运行测试 | 已实现 |
-| `atb status [--json]` | 展示任务看板：状态、分支、领先/落后提交、改动文件数、未提交文件数(DIRTY)、越界数、空闲时长(IDLE)、最近测试 | 已实现 |
+| `atb status [--json]` | 展示任务看板：状态、分支、领先/落后提交、改动文件数、未提交文件数(DIRTY)、越界数、空闲时长(IDLE)、最近测试、`READY`（是否可合并）及上游未推送计数 | 已实现 |
 | `atb conflicts [--json]` | 两两对比活跃任务的文件重叠、`merge-tree` 真实冲突与基线漂移 | 已实现 |
-| `atb review ID [--out FILE] [--lang zh\|en]` | 生成汇总检查、测试、活动与历史、doctor 提示、diffstat、冲突与验收清单的 Markdown 审查表（中/英） | 已实现 |
+| `atb review ID [--out FILE] [--lang zh\|en] [--json]` | 生成 Markdown 或结构化 JSON（含 `ready`/`blockers`）审查表，汇总检查、测试、活动与历史、doctor 提示、diffstat、冲突与验收清单（会把 `doing`/`rework` 改为 `review`） | 已实现 |
 | `atb rework ID --note "..."` | 将状态改为 `rework` 并追加意见，使下次 `atb prompt` 优先展示 | 已实现 |
-| `atb done ID [--merge] [--clean] [--force]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree 与分支 | 已实现 |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree/分支；仅在传 `--push` 或开启 `push_after_done = true`（未传 `--no-push`）时推送 | 已实现 |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或安全清理 `done`/`dropped` 任务遗留的 worktree 与分支（只用 `git branch -d`） | 已实现 |
 | `atb doctor [--json]` | 一次性只读环境体检：git 版本、配置、任务单、活跃 worktree、残留与孤儿 worktree | 已实现 |
 | `atb log ID [--json] [--verbose]` | 按时间线追溯单个任务的历史：状态变迁、返工记录、测试运行与合并提交 | 已实现 |
-| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | 导出单文件静态 HTML 看板（含未提交/空闲列、卡住高亮及中英双语，默认 `zh`） | 已实现 |
+| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | 导出单文件静态 HTML 看板（含未提交/空闲/可合并列，悬停显示 blockers，卡住高亮及中英双语，默认 `zh`） | 已实现 |
 | `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待任务状态/分支提交/新增任务单变化，或 stall/activity 告警，逐行打印摘要后退出（超时退出码 3） | 已实现 |
 
@@ -149,7 +149,7 @@ atb watch --stall 30 --activity --timeout 3600
 ## 设计原则
 
 - **纯本地、零依赖**：仅使用 Python 标准库与 `git` 命令行，所有状态以纯文本保存在 `.taskboard/`。
-- **从不 push**：`atb` 永远不会执行 `git push`。
+- **默认不 push**：仅在显式运行 `atb done --merge --push`（或在 `.taskboard/config.toml` 配置 `push_after_done = true` 且未传 `--no-push`）时推送目标分支，且永远不使用 `--force`。
 - **从不自动合并**：不做隐式合并，也不执行破坏性的 `reset --hard`。
 - **不改 Agent 的文件**：不调用任何模型 API，也不修改你所用编程 Agent 的配置文件，只负责生成交接提示词和校验 git worktree。
 

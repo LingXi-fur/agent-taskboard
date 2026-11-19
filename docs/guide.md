@@ -110,14 +110,19 @@ atb status
 atb board --html board.html --lang en --stall 120
 ```
 
-Real `atb status` output:
+Real `atb status` output (with the `READY` column showing merge readiness and any leading blocker):
 
 ```text
-ID    STATUS  AGENT     TITLE                    BRANCH                          AHEAD/BEHIND  FILES  DIRTY  VIOL  IDLE  TEST
-T001  doing   claude    Update greeting message  claude/update-greeting-message  +1/-1         2      0      1     0s    —   
-T002  doing   opencode  Localize greeting        opencode/localize-greeting      +1/-1         2      0      0     0s    ✓   
-todo: 0  doing: 2  review: 0  rework: 0  done: 0  dropped: 0
+main: no upstream
+ID    STATUS  AGENT     TITLE              BRANCH                      AHEAD/BEHIND  FILES  DIRTY  VIOL  IDLE  TEST  READY
+T001  review  claude    Update greeting    claude/update-greeting      +1/-0         1      0      1     1s    —     ✗ scope_violation
+T002  review  opencode  Localize greeting  opencode/localize-greeting  +1/-0         1      0      0     0s    ✓     ✓
+todo: 0  doing: 0  review: 2  rework: 0  done: 0  dropped: 0
 ```
+
+- `READY` is computed for `review` tasks (including `merge-tree` conflict checks against `target` and active-task conflicts): `✓` when merge-ready, `✗ <code>` showing the first blocker otherwise. Non-`review` tasks (`todo`, `doing`, `rework`, `done`, `dropped`) show `—` (`ready: null`).
+- In `atb board --html`, the `Ready` / `可合并` column uses the same logic and shows the full `blockers` list on hover in the selected `--lang`.
+- `atb status --json` adds `ready` (`true` / `false` / `null`) and `blockers` to each item under `tasks` without changing top-level keys (`tasks`, `summary`).
 
 ### 5. Agent reports back: check scope and tests (`atb check` & `atb conflicts`)
 
@@ -215,6 +220,32 @@ How to read the enriched review sheet:
 - **`Status history`**: up to the latest 10 status transitions recorded for this sheet.
 - **`Doctor issues`**: any `doctor` `FAIL` specifically affecting this task (for example, a missing worktree or mismatched worktree branch), without dumping unrelated repo checks.
 
+#### Structured review output (`atb review ID --json`)
+
+Use `--json` when scripts or orchestrators need to decide programmatically whether a task is ready to merge (pass `--out FILE` to save to disk, and `--lang zh|en` to localize `blockers[*].message` while keeping keys fixed; JSON is serialized with `sort_keys=True`). Like the Markdown form, `atb review --json` transitions `doing`/`rework` to `review`.
+
+- **Top-level fields**: `id`, `title`, `agent`, `status`, `branch`, `base`, `scope` (`denied`, `outside`, `uncommitted`), `test` (`result`, `last_run`), `activity` (`dirty`, `idle_seconds`, `rework_count`, `status_history`), `doctor_fails`, `diffstat` (`files` list + `totals`), `conflicts`, `mergeable`, `drift`, `acceptance` (`[{"text", "checked"}]`), `ready` (boolean), `blockers` (`[{"code", "message"}]`).
+- **Blocker codes**:
+
+| Code | Meaning |
+|---|---|
+| `missing_branch` | Task branch or worktree is missing or unreadable |
+| `scope_violation` | Committed or uncommitted changes hit `denied` or `outside` paths |
+| `uncommitted` | Worktree still has uncommitted changes |
+| `test_not_passed` | Latest test record is missing or non-zero exit |
+| `merge_conflict` | Conflicts with `target` (`merge-tree`) or active tasks (or target ref unreadable) |
+| `doctor_fail` | Task-specific `doctor` `FAIL` (e.g. missing worktree or wrong branch) |
+
+Example — filter merge-ready tasks with `jq`:
+
+```bash
+# Quick scan across status --json
+atb status --json | jq -r '.tasks[] | select(.ready == true) | .id'
+
+# Or confirm a single task via review --json (note: flips doing/rework -> review)
+atb review T002 --json | jq -r 'select(.ready) | .id'
+```
+
 ### 7. Request rework or finish & merge (`atb rework` / `atb done`)
 
 ```bash
@@ -223,6 +254,8 @@ atb rework T001 --note "Revert changes to src/core.py and resolve conflict in sr
 
 # Ready to merge
 atb done T002 --merge
+# Or merge, clean up worktree/branch, and push target branch
+atb done T002 --merge --clean --push
 ```
 
 Real output:
@@ -233,7 +266,7 @@ merged 'opencode/localize-greeting' into main with --no-ff
 marked T002 done; task sheet updated — commit it yourself (never pushed)
 ```
 
-`atb done` refuses if there are scope violations, uncommitted files, or no passing last test record. Pass `--clean` together with `--merge` to remove the worktree and branch immediately on merge.
+`atb done` refuses if there are scope violations, uncommitted files, or no passing last test record. Pass `--clean` together with `--merge` to remove the worktree and branch immediately on merge. Pass `--push` (only valid with `--merge`) to push `target` to upstream/`origin` after merging; you can also set `push_after_done = true` in `.taskboard/config.toml` to push after `--merge` by default, and override it per command with `--no-push`. Pushes never use `--force`; if a push is rejected, the local merge is preserved and `atb` tells you how to rebase and push manually.
 
 ### 8. Clean up leftover worktrees and branches (`atb gc`)
 
@@ -343,11 +376,11 @@ Notes:
 | `atb dispatch [--json] [--lang zh\|en]` | Print a per-window forwarding checklist. |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until status/commits/new-task changes, stalls, or activity changes. |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope check; optionally run tests (isolated `HOME` option). |
-| `atb status [--json]` | Board metrics, `DIRTY`, `IDLE`, and last test state. |
+| `atb status [--json]` | Board metrics, `DIRTY`, `IDLE`, last test, `READY` (`ready`/`blockers`), and target upstream state. |
 | `atb conflicts [--json]` | File overlap, merge-tree conflicts, and drift. |
-| `atb review ID [--out FILE] [--lang zh\|en]` | Build an enriched review sheet (`Activity and history`, uncommitted alert, doctor hints). |
+| `atb review ID [--out FILE] [--lang zh\|en] [--json]` | Build an enriched review sheet or structured JSON (`ready`/`blockers`); flips `doing`/`rework` to `review`. |
 | `atb rework ID --note TEXT` (or `@file`) | Send back and append rework notes. |
-| `atb done ID [--merge] [--clean] [--force]` | Verify and finish; optional merge and cleanup. |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify and finish; optional merge, cleanup, and non-forced push (`push_after_done`). |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches for `done`/`dropped` tasks. |
 | `atb doctor [--json]` | One-shot read-only environment and board health check. |
 | `atb log ID [--json] [--verbose]` | Chronological status changes, rework notes, test runs, and merges. |

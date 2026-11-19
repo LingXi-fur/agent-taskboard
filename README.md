@@ -122,15 +122,15 @@ created = 2026-11-14T08:00:00Z
 | `atb start ID [--base REV] [--force]` | Validate dependencies, create a git worktree, record `base` & `branch` | Implemented |
 | `atb prompt ID [--lang zh\|en]` | Generate a full handoff prompt (rework notes first, then scope & body) | Implemented |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope-check committed & uncommitted changes; optionally run tests in a throwaway isolated `HOME` | Implemented |
-| `atb status [--json]` | Show board: status, branch, ahead/behind, files, dirty (uncommitted), violations, idle time, last test | Implemented |
+| `atb status [--json]` | Show board: status, branch, ahead/behind, files, dirty (uncommitted), violations, idle time, last test, `READY` (`✓` / `✗ blocker`), and target upstream status | Implemented |
 | `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
-| `atb review ID [--out FILE] [--lang zh\|en]` | Generate a Markdown review sheet combining checks, tests, activity & history, doctor hints, diffstat, conflicts, and checklist (Chinese/English) | Implemented |
+| `atb review ID [--out FILE] [--lang zh\|en] [--json]` | Generate a Markdown or structured JSON (`ready`/`blockers`) review sheet combining checks, tests, activity & history, doctor hints, diffstat, conflicts, and checklist (flips `doing`/`rework` to `review`) | Implemented |
 | `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
-| `atb done ID [--merge] [--clean] [--force]` | Verify checks pass, merge with `--no-ff`, and optionally clean up worktree and branch | Implemented |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify checks pass, merge with `--no-ff`, optionally clean up worktree/branch, and push only on `--push` (or `push_after_done = true` unless `--no-push`) | Implemented |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches (`git branch -d` only) for `done`/`dropped` tasks | Implemented |
 | `atb doctor [--json]` | One-shot read-only health check: git version, config, task sheets, active worktrees, leftovers, and orphans | Implemented |
 | `atb log ID [--json] [--verbose]` | Show chronological per-task history: status changes, rework notes, test runs, and merges | Implemented |
-| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | Export a standalone static HTML board with `Dirty`/`Idle` columns, stall highlighting, and zh/en localization (default `zh`) | Implemented |
+| `atb board --html out.html [--stall MIN] [--lang zh\|en]` | Export a standalone static HTML board with `Dirty`/`Idle`/`Ready` columns (hover shows all blockers), stall highlighting, and zh/en localization (default `zh`) | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until a task status/commit/new-sheet change, a stall, or an activity change, then print a summary and exit (exit 3 on timeout) | Implemented |
 
@@ -156,7 +156,7 @@ atb watch --stall 30 --activity --timeout 3600
 ## Principles
 
 - **Local-only & zero dependencies**: Standard-library Python + `git` CLI. All state lives as plain text under `.taskboard/`.
-- **Never pushes**: `atb` never runs `git push`.
+- **Never pushes by default**: `atb` only pushes the target branch on `atb done --merge --push` (or when `push_after_done = true` in `.taskboard/config.toml`, overrideable with `--no-push`), and never uses `--force`.
 - **Never auto-merges**: No implicit merges or destructive `reset --hard`.
 - **Agent-agnostic**: `atb` never calls model APIs or modifies your agent tools' files; it only produces handoff prompts and verifies git worktrees.
 

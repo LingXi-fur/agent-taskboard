@@ -228,21 +228,35 @@ def parse_acceptance_items(acceptance_text: str) -> list[dict[str, object]]:
     return items
 
 
-def build_review_json(info: dict, *, lang: str = "zh") -> dict:
-    """Build a structured JSON dict corresponding to the review sheet."""
+def evaluate_readiness(
+    *,
+    task_id: str,
+    denied: list[str] | tuple[str, ...] = (),
+    outside: list[str] | tuple[str, ...] = (),
+    uncommitted: list[str] | tuple[str, ...] = (),
+    test_result: str | None = None,
+    target: str = "main",
+    target_conflicts: list[str] | tuple[str, ...] = (),
+    target_merge_error: str | None = None,
+    conflicts: list[dict] | tuple[dict, ...] = (),
+    doctor_fails: list[str] | tuple[str, ...] = (),
+    missing_reason: str | None = None,
+    lang: str = "zh",
+) -> tuple[bool, list[dict[str, str]]]:
+    """Compute ``(ready, blockers)`` from pre-collected review/board inputs."""
     zh = lang != "en"
-    denied = list(info["denied"])
-    outside = list(info["outside"])
-    uncommitted = list(info["uncommitted"])
-    doctor_fails = list(info.get("doctor_fails") or [])
-    conflicts = list(info["conflicts"])
-    target_conflicts = list(info.get("target_conflicts") or [])
-    target_merge_error = info.get("target_merge_error")
-    target = info.get("target") or "main"
-
     blockers: list[dict[str, str]] = []
+    if missing_reason:
+        blockers.append({
+            "code": "missing_branch",
+            "message": (
+                f"分支或 worktree 缺失：{missing_reason}"
+                if zh
+                else f"branch or worktree missing: {missing_reason}"
+            ),
+        })
     if denied or outside:
-        viol_paths = ", ".join(denied + outside)
+        viol_paths = ", ".join(list(denied) + list(outside))
         blockers.append({
             "code": "scope_violation",
             "message": (
@@ -261,7 +275,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
                 else f"uncommitted changes: {paths}"
             ),
         })
-    if info["test"] != "ok":
+    if test_result != "ok":
         blockers.append({
             "code": "test_not_passed",
             "message": (
@@ -291,7 +305,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
         if conflicts:
             other_parts = []
             for entry in conflicts:
-                other = entry["b"] if entry["a"] == info["id"] else entry["a"]
+                other = entry["b"] if entry["a"] == task_id else entry["a"]
                 other_parts.append(f"{other}: {', '.join(entry['files'])}")
             desc = "; ".join(other_parts)
             parts.append(
@@ -318,6 +332,33 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
                 else f"doctor reported FAIL(s): {desc}"
             ),
         })
+    return len(blockers) == 0, blockers
+
+
+def build_review_json(info: dict, *, lang: str = "zh") -> dict:
+    """Build a structured JSON dict corresponding to the review sheet."""
+    denied = list(info["denied"])
+    outside = list(info["outside"])
+    uncommitted = list(info["uncommitted"])
+    doctor_fails = list(info.get("doctor_fails") or [])
+    conflicts = list(info["conflicts"])
+    target_conflicts = list(info.get("target_conflicts") or [])
+    target_merge_error = info.get("target_merge_error")
+    target = info.get("target") or "main"
+
+    ready, blockers = evaluate_readiness(
+        task_id=info["id"],
+        denied=denied,
+        outside=outside,
+        uncommitted=uncommitted,
+        test_result=info["test"],
+        target=target,
+        target_conflicts=target_conflicts,
+        target_merge_error=target_merge_error,
+        conflicts=conflicts,
+        doctor_fails=doctor_fails,
+        lang=lang,
+    )
 
     last_detail = info.get("last_test_detail")
     last_run = None
@@ -357,7 +398,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
         "mergeable": list(info["mergeable"]),
         "drift": list(info["drift"]),
         "acceptance": parse_acceptance_items(info.get("acceptance") or ""),
-        "ready": len(blockers) == 0,
+        "ready": ready,
         "blockers": blockers,
     }
 
@@ -436,6 +477,8 @@ tr:last-child td { border-bottom: none; }
 .badge.dropped { color: var(--muted); text-decoration: line-through; }
 .missing { color: var(--bad); }
 .violations-bad { color: var(--bad); font-weight: 700; }
+.ready-ok { color: var(--ok); font-weight: 700; }
+.ready-bad { color: var(--bad); font-weight: 700; }
 .muted { color: var(--muted); }
 .summary { margin-top: 1rem; color: var(--muted); }
 .board-meta { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; }
@@ -467,7 +510,7 @@ _BOARD_I18N: dict[str, dict[str, Any]] = {
         "heading": "atb 任务看板",
         "headers": (
             "ID", "状态", "Agent", "标题", "分支",
-            "领先/落后", "文件", "未提交", "越界", "空闲", "测试",
+            "领先/落后", "文件", "未提交", "越界", "空闲", "测试", "可合并",
         ),
         "statuses": {
             "todo": "待办",
@@ -494,7 +537,7 @@ _BOARD_I18N: dict[str, dict[str, Any]] = {
         "heading": "atb board",
         "headers": (
             "ID", "Status", "Agent", "Title", "Branch",
-            "Ahead/Behind", "Files", "Dirty", "Violations", "Idle", "Test",
+            "Ahead/Behind", "Files", "Dirty", "Violations", "Idle", "Test", "Ready",
         ),
         "statuses": {
             "todo": "todo",
@@ -566,6 +609,17 @@ def _task_row_html(
     else:
         idle_cell = _cell(idle_text)
     test_mark = {"ok": "✓", "fail": "✗"}.get(row["test"], "—")
+    ready = row.get("ready")
+    if ready is None:
+        ready_cell = _cell("—")
+    elif ready is True:
+        ready_cell = '<td class="ready-ok">✓</td>'
+    else:
+        blockers = row.get("blockers") or []
+        first_code = blockers[0]["code"] if blockers else "blocked"
+        tooltip = "\n".join(f"{b['code']}: {b['message']}" for b in blockers)
+        title_attr = f' title="{_esc(tooltip)}"' if tooltip else ""
+        ready_cell = f'<td class="ready-bad"{title_attr}>✗ {_esc(first_code)}</td>'
     row_attr = ' class="stall-row"' if stalled else ""
     status_label = i18n["statuses"].get(row["status"], row["status"])
     return (
@@ -581,6 +635,7 @@ def _task_row_html(
         + _cell(violations, viol_cls)
         + idle_cell
         + _cell(test_mark)
+        + ready_cell
         + "</tr>"
     )
 
