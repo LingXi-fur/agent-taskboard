@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import checks, config, doctor, gc, gitops, history, prompts, render, scope
+from . import checks, config, doctor, gc, gitops, history, prompts, render, scope, stats
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -1900,6 +1900,36 @@ def cmd_log(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# stats
+# --------------------------------------------------------------------------- #
+
+def _parse_since(value: str) -> float:
+    """Turn ``YYYY-MM-DD`` into a unix timestamp at local midnight."""
+    try:
+        naive = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise AtbError(
+            f"invalid --since {value!r}: expected YYYY-MM-DD"
+        ) from exc
+    return naive.astimezone().timestamp()
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    sheets = _load_tasks(repo_root)
+    since = _parse_since(args.since) if args.since else None
+    summary = stats.summarize(
+        repo_root, sheets, since=since, agent=args.agent
+    )
+    if args.json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        print(stats.render_stats(summary, lang=args.lang))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -2074,6 +2104,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--json", action="store_true")
     p_log.add_argument("--verbose", action="store_true", help="include the last 5 lines of each test run output")
     p_log.set_defaults(func=cmd_log)
+
+    p_stats = sub.add_parser(
+        "stats", help="per-agent throughput, rework and cycle time"
+    )
+    p_stats.add_argument(
+        "--since", metavar="YYYY-MM-DD",
+        help="only count tasks with recorded activity on or after this date",
+    )
+    p_stats.add_argument("--agent", help="only show this agent")
+    p_stats.add_argument("--json", action="store_true")
+    p_stats.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
+    p_stats.set_defaults(func=cmd_stats)
 
     return parser
 
