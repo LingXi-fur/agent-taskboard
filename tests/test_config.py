@@ -86,10 +86,11 @@ class LoadConfigTests(unittest.TestCase):
                 'worktree_root = "/absolute/{repo}"\n', encoding="utf-8"
             )
             cfg = config.load_config(repo)
-            self.assertEqual(
-                config.resolve_worktree_root(cfg),
-                Path("/absolute/myrepo").resolve(),
-            )
+            # A root-relative path (``/absolute/...``) has no drive on Windows,
+            # so resolving it keeps the repository's drive rather than the
+            # process's current drive.  Build the expectation the same way.
+            expected = (Path(repo.anchor) / "absolute" / "myrepo").resolve()
+            self.assertEqual(config.resolve_worktree_root(cfg), expected)
 
 
 class GitVersionTests(unittest.TestCase):

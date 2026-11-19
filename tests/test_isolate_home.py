@@ -34,13 +34,13 @@ class IsolateHomeTests(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> None:
         subprocess.run(
             ["git", *args], cwd=str(cwd), env=self._env(cwd),
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
 
     def _atb(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "agent_taskboard", *args],
-            cwd=str(repo), env=self._env(repo), capture_output=True, text=True,
+            cwd=str(repo), env=self._env(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup(self, base: Path, *, isolate_home: bool = False) -> Path:

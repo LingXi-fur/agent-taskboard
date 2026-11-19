@@ -397,6 +397,8 @@ def _run_test(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except FileNotFoundError:
         return {
@@ -422,7 +424,11 @@ def _run_test(
 def _iter_home_files(root: Path) -> set[str]:
     if not root.exists():
         return set()
-    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
+    # Always report repo-style separators so the output (and recorded JSON)
+    # matches the documented POSIX form on Windows too.
+    return {
+        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
+    }
 
 
 def _run_test_isolated(
@@ -435,6 +441,10 @@ def _run_test_isolated(
     env["XDG_CACHE_HOME"] = str(home / ".cache")
     env["XDG_DATA_HOME"] = str(home / ".local" / "share")
     env["XDG_CONFIG_HOME"] = str(home / ".config")
+    # Windows tools (and Python's ``Path.home``) look at these instead of HOME.
+    env["USERPROFILE"] = str(home)
+    env["APPDATA"] = str(home / "AppData" / "Roaming")
+    env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
     # The throwaway HOME has no ~/.gitconfig, so give tests a usable identity.
     env.setdefault("GIT_AUTHOR_NAME", "atb")
     env.setdefault("GIT_AUTHOR_EMAIL", "atb@example.invalid")
@@ -924,6 +934,8 @@ def _structured_diffstat(base: str, branch: str, repo_root: Path) -> dict:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         env=gitops.git_env(),
     )
@@ -1771,7 +1783,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_stdio() -> None:
+    """Make stdout/stderr UTF-8 so non-ASCII output works everywhere.
+
+    On Windows the default encoding for redirected streams is the ANSI code
+    page (cp1252 on many hosts); printing Chinese task titles or arrows then
+    raises ``UnicodeEncodeError``.  atb intentionally emits UTF-8 everywhere.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

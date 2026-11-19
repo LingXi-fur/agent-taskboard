@@ -30,13 +30,13 @@ class PushTests(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> str:
         return subprocess.run(
             ["git", *args], cwd=str(cwd), env=self._env(cwd),
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
 
     def _atb(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "agent_taskboard", *args],
-            cwd=str(repo), env=self._env(repo), capture_output=True, text=True,
+            cwd=str(repo), env=self._env(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup(
@@ -92,7 +92,7 @@ class PushTests(unittest.TestCase):
         bare = base / "remote.git"
         proc = subprocess.run(
             ["git", "--git-dir", str(bare), "rev-parse", "main"],
-            env=self._env(base), capture_output=True, text=True,
+            env=self._env(base), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         return proc.stdout.strip() if proc.returncode == 0 else None
 

@@ -29,13 +29,13 @@ class WatchTests(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> None:
         subprocess.run(
             ["git", *args], cwd=str(cwd), env=self._env(cwd),
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
 
     def _atb(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "agent_taskboard", *args],
-            cwd=str(repo), env=self._env(repo), capture_output=True, text=True,
+            cwd=str(repo), env=self._env(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup(self, base: Path) -> Path:
@@ -68,7 +68,7 @@ class WatchTests(unittest.TestCase):
         proc = subprocess.Popen(
             [sys.executable, "-m", "agent_taskboard", "watch", *args],
             cwd=str(repo), env=self._env(repo),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
         )
         try:
             time.sleep(delay)  # let the baseline snapshot settle
@@ -162,7 +162,7 @@ class WatchTests(unittest.TestCase):
         env["GIT_COMMITTER_DATE"] = stamp
         subprocess.run(
             ["git", "commit", "--amend", "--allow-empty", "--no-edit"],
-            cwd=str(repo), env=env, capture_output=True, text=True, check=True,
+            cwd=str(repo), env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
 
     def _branch_of(self, repo: Path, tid: str) -> str:

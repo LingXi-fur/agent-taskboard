@@ -25,13 +25,13 @@ class _Base(unittest.TestCase):
     def _run(self, cwd: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "agent_taskboard", *args],
-            cwd=str(cwd), env=self._env(cwd), capture_output=True, text=True,
+            cwd=str(cwd), env=self._env(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
     def _git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", *args], cwd=str(cwd), env=self._env(cwd),
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
 
     def _committed_repo(self, tmp: Path) -> None:
@@ -64,7 +64,7 @@ class VersionTests(unittest.TestCase):
         env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
         result = subprocess.run(
             [sys.executable, "-m", "agent_taskboard", "--version"],
-            env=env, capture_output=True, text=True,
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         from agent_taskboard import __version__

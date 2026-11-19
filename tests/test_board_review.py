@@ -34,7 +34,7 @@ class BoardReviewTests(unittest.TestCase):
             cwd=str(tmp),
             env=self._env(tmp),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=check,
         )
 
@@ -44,7 +44,7 @@ class BoardReviewTests(unittest.TestCase):
             cwd=str(tmp),
             env=self._env(tmp),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
 
     def _setup_repo(self, tmp: Path) -> None:

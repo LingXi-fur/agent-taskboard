@@ -21,6 +21,8 @@ def is_branch_merged(branch: str, target: str, cwd: str | Path) -> bool:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return proc.returncode == 0

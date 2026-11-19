@@ -34,7 +34,7 @@ class OptionalLockTests(unittest.TestCase):
 
     def _git(self, cwd: Path, base: Path, *args: str) -> None:
         subprocess.run(["git", *args], cwd=str(cwd), env=self._env(base),
-                       capture_output=True, text=True, check=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
     def test_status_does_not_rewrite_worktree_index(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,7 +58,7 @@ class OptionalLockTests(unittest.TestCase):
             env = self._env(base)
             atb = [sys.executable, "-m", "agent_taskboard"]
             start = subprocess.run(atb + ["start", "T001"], cwd=str(repo), env=env,
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace")
             self.assertEqual(start.returncode, 0, start.stderr)
 
             wt = base / "wts" / "T001"
@@ -73,7 +73,7 @@ class OptionalLockTests(unittest.TestCase):
 
             for cmd in (["status"], ["status", "--json"]):
                 proc = subprocess.run(atb + cmd, cwd=str(repo), env=env,
-                                      capture_output=True, text=True)
+                                      capture_output=True, text=True, encoding="utf-8", errors="replace")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(index.stat().st_mtime_ns, before,
                              "atb rewrote the worktree index (took index.lock)")
