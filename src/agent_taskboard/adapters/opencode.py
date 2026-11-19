@@ -81,6 +81,9 @@ class OpenCodeAdapter:
                 (since_ms,),
             ).fetchall()
         except sqlite3.Error as exc:
+            # close before raising: on Windows an open handle keeps the file
+            # locked, which would break test cleanup (and any external tool)
+            connection.close()
             raise AdapterError(f"cannot read sessions: {exc}") from exc
 
         now = utcnow()

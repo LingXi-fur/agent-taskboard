@@ -20,7 +20,13 @@ PLACEHOLDER = "REPO_WT_PLACEHOLDER"
 
 
 def _copy_fixture(source: Path, target: Path, worktree: str) -> None:
-    """Copy a fixture tree, rewriting the worktree placeholder."""
+    """Copy a fixture tree, rewriting the worktree placeholder.
+
+    The path is written with forward slashes: on Windows a backslash path
+    embedded in a JSONL line would make the line invalid JSON, and pathlib
+    compares forward- and backslash forms as equal anyway.
+    """
+    posix_worktree = worktree.replace(os.sep, "/")
     for path in source.rglob("*"):
         if path.is_dir():
             continue
@@ -28,7 +34,7 @@ def _copy_fixture(source: Path, target: Path, worktree: str) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         text = path.read_text(encoding="utf-8")
         destination.write_text(
-            text.replace(PLACEHOLDER, worktree), encoding="utf-8"
+            text.replace(PLACEHOLDER, posix_worktree), encoding="utf-8"
         )
 
 
@@ -142,7 +148,7 @@ class SessionsTests(unittest.TestCase):
                 base / "gemini-home" / "tmp",
                 str(worktree),
             )
-        _build_db(base / "oc-home" / "opencode.db", str(worktree))
+        _build_db(base / "oc-home" / "opencode.db", str(worktree).replace(os.sep, "/"))
         return repo
 
     # ------------------------------------------------------------------ #
