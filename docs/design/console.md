@@ -1,6 +1,6 @@
 # Design: the atb console
 
-Status: accepted (2026-11-19). Chinese translation: `console.zh-CN.md` (to be added).
+Status: accepted (2026-11-19). Chinese translation: [`console.zh-CN.md`](console.zh-CN.md).
 
 ## Goal
 
