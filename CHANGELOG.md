@@ -5,6 +5,14 @@ All notable changes to `atb` are documented in this file.
 
 ## [Unreleased]
 
+### Added / 新增
+
+- `atb done --merge` refuses tasks that are not ready, using the same check as `review --json` (scope, uncommitted changes, tests, conflicts, doctor). `--force` merges anyway and lists the ignored blockers; `require_ready_for_done = false` turns the refusal into a warning. / `atb done --merge` 拒绝合并未就绪的任务，判断与 `review --json` 完全相同（范围、未提交改动、测试、冲突、doctor）。`--force` 仍可合并并列出被忽略的 blocker；`require_ready_for_done = false` 改为只警告。
+- `atb stats` summarizes each agent: done, dropped and active tasks, rework rate, median and P90 cycle time, time waiting for review, and test-failure rate; `--since`, `--agent`, `--json`, `--lang`. Tasks without history show “—”. / `atb stats` 按 agent 汇总：完成、放弃、进行中数，返工率，周期中位数和 P90，等待审查时长，测试失败率；支持 `--since`、`--agent`、`--json`、`--lang`。缺少历史的任务显示“—”。
+- `atb sync ID` brings a task branch up to date with the target (rebase by default, `--merge` optional, `--dry-run` predicts conflicts). It refuses a dirty worktree, aborts and restores on conflict, never pushes, and reminds you when the branch is already on a remote. `atb status` and `atb prompt` suggest it for tasks that are behind. / `atb sync ID` 把目标分支同步进任务分支（默认 rebase，可选 `--merge`，`--dry-run` 预测冲突）。worktree 有未提交改动时拒绝；有冲突时自动撤回并恢复；从不 push；分支已在远端时会提醒。`atb status` 和 `atb prompt` 会对落后的任务给出建议。
+- `atb sessions` lists the agent sessions on this machine, read-only, from Claude Code, Codex, Gemini CLI and OpenCode, and maps each to a task by working directory or branch (others are “free sessions”). Third-party adapters plug in through the `agent_taskboard.adapters` entry point. Message summaries are cut to 120 characters and `--redact` hides them; a broken store marks only its adapter as failed. `atb doctor` reports each adapter. / `atb sessions` 只读地列出本机 Claude Code、Codex、Gemini CLI 和 OpenCode 的 agent 会话，并按工作目录或分支对应到任务（对不上的算“自由会话”）。第三方 adapter 通过 `agent_taskboard.adapters` entry point 接入。消息摘要截断到 120 字，`--redact` 完全隐藏；某个存储损坏只会让对应的 adapter 标记失败。`atb doctor` 会显示每个 adapter 的状态。
+- Design document for the local console: `docs/design/console.md`. / 本地控制台设计文档：`docs/design/console.md`。
+
 ## [0.2.0] - YYYY-MM-DD
 
 ### Added / 新增
