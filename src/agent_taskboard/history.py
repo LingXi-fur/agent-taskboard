@@ -288,6 +288,12 @@ def _rework_events(
     return events, notes
 
 
+def rework_count(sheet: Sheet) -> int:
+    """Number of rework notes recorded in the sheet body."""
+    _events, notes = _rework_events(sheet)
+    return len(notes)
+
+
 def collect_task_history(
     repo_root: Path,
     cfg: config.Config,
