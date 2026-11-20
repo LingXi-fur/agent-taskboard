@@ -369,21 +369,57 @@ stateDiagram-v2
 | 命令 | 用途 |
 |---|---|
 | `atb init` | 创建 `.taskboard/` 和默认配置。 |
-| `atb new "标题" --agent X [--allow G]... [--deny G]... [--depends ID]...` | 创建 `todo` 任务单。 |
+| `atb new "标题" --agent X [--allow G]... [--deny G]... [--depends ID]... [--body @FILE\|-] [--copy-to DIR]` | 创建 `todo` 任务单；`--body` 从 UTF-8 文件或 stdin 写入正文，`--copy-to DIR` 额外复制到 `DIR/ATB_TASK_<ID>.md`。 |
+| `atb edit ID [--body @FILE\|-] [--title T] [--agent A] [--add-allow G] [--remove-allow G] [--add-deny G] [--remove-deny G] [--copy-to DIR]` | 不用手改 TOML 直接编辑任务单（增删选项可重复）。 |
 | `atb list [--status S]` / `atb show ID` | 查看任务单。 |
 | `atb start ID [--base REV] [--force]` | 创建/复用 worktree，状态改为 `doing`。 |
-| `atb prompt ID [--lang zh\|en]` | 输出完整交接文本。 |
+| `atb prompt ID [--lang zh\|en]` | 输出完整交接文本（分支落后目标时加"开工前先运行 atb sync ID"）。 |
 | `atb dispatch [--json] [--lang zh\|en]` | 按窗口生成活跃任务转发清单。 |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待状态/提交/新增任务变化，或 stall/activity 告警。 |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | 范围检查；可选在隔离的临时 `HOME` 运行测试。 |
-| `atb status [--json]` | 看板指标、`DIRTY`、`IDLE`、最近测试、`READY`（`ready`/`blockers`）与上游未推送状态。 |
+| `atb status [--json]` | 看板指标、`DIRTY`、`IDLE`、最近测试、`READY`（`ready`/`blockers`）、上游未推送状态；对落后目标的前三个任务给出 `atb sync` 建议。 |
 | `atb conflicts [--json]` | 文件重叠、merge-tree 冲突和基线漂移。 |
 | `atb review ID [--out FILE] [--lang zh\|en] [--json]` | 生成增强审查表或结构化 JSON（含 `ready`/`blockers`）；会把 `doing`/`rework` 变为 `review`。 |
 | `atb rework ID --note TEXT`（或 `@file`） | 打回并追加返工记录。 |
-| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | 校验并收尾；可选合并、清理和非强推（支持 `push_after_done`）。 |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | 校验并收尾；`--merge` 用与 `review --json` 相同的 blocker 拒绝不 ready 的任务（`--force` 列出并忽略，或配置 `require_ready_for_done = false` 只警告）；可选清理与非强推。 |
+| `atb sync ID [--rebase \| --merge] [--dry-run]` | 在任务 worktree 内把目标分支同步进任务分支（默认 `--rebase`；脏 worktree 拒绝、冲突自动 abort 复原、`--dry-run` 用 merge-tree 预测）。 |
+| `atb stats [--since YYYY-MM-DD] [--agent NAME] [--json] [--lang zh\|en]` | 按 agent 汇总产出、返工率、周期与测试健康度。 |
+| `atb sessions [--since SPEC] [--adapter NAME] [--redact] [--json] [--lang zh\|en]` | 只读观察本机 Claude Code / Codex / Gemini CLI / OpenCode 会话并对应到任务。 |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或安全清理 `done`/`dropped` 任务遗留的 worktree 和分支。 |
-| `atb doctor [--json]` | 一次性只读环境体检。 |
+| `atb doctor [--json]` | 一次性只读环境体检（每个会话 adapter 一行）。 |
 | `atb log ID [--json] [--verbose]` | 按时间顺序查看单任务状态变迁、返工、测试和合并记录。 |
 | `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | 导出单文件静态 HTML 看板（默认 `zh`，卡住阈值默认 `120` 分钟）。 |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | 启动本地只读控制台和 JSON API v1（只用标准库，无 CDN）。 |
 
 所有命令均支持 `--help`。
+
+## 正文、ready 门禁、统计、同步、会话与控制台
+
+- **不用手改正文。** `atb new "修登录" --agent opencode --body @task.md`
+  （或 `--body -` 从 stdin）一步写入 Markdown 正文；写入时会规范化为
+  `+++` 后恰好一个空行、文件以单个换行结尾。`atb edit T001 --body
+  @new.md --add-allow "tests/**" --remove-deny "docs/**" --title "新标题"`
+  不碰 TOML 就能改元数据和范围；`done`/`dropped` 任务拒绝编辑。
+  `--copy-to DIR`（`new`/`edit` 都支持）把任务单复制一份到
+  `DIR/ATB_TASK_<ID>.md`，方便只能打开一个目录的编辑器；目录必须已存在。
+- **`done --merge` 有门禁。** 与 `review --json` 完全同一套判定（越界、
+  未提交、测试未过或缺失、合并冲突、doctor FAIL），有 blocker 就逐条
+  列出并拒绝；任务单没配 `test` 且从未跑过测试时，提示先
+  `atb check ID --test` 或填写 `test` 字段。`--force` 照常合并并打印
+  "已忽略的 blocker" 清单（仍保留允许完成 `doing` 任务的原语义）；
+  `config.toml` 设 `require_ready_for_done = false` 则只警告不拒绝。
+- **`atb stats`** 回答"下一单给谁"：按 agent 显示完成/放弃/进行中、至少
+  返工一次的任务占比、start→done 周期中位/P90、等待审查中位、最近一次
+  测试失败率。缺历史的任务不计入周期，底部注明个数。
+- **`atb sync T001`** 在任务 worktree 内更新任务分支：默认 rebase 到目标
+  （`--merge` 改为合并）、有未提交改动时拒绝、冲突时自动 `--abort` 恢复
+  原状并列出冲突文件、`--dry-run` 用 `git merge-tree` 预测。分支已在远端
+  时只提醒 agent 自己执行 `git push --force-with-lease`，atb 从不推送它。
+- **`atb sessions`** 只读观察本机所有已安装的 agent（内置 Claude Code、
+  Codex、Gemini CLI、OpenCode，其他工具经 `agent_taskboard.adapters`
+  入口点注册）。会话按工作目录或分支对应到任务，其余为自由会话。大的
+  JSONL 只读头尾，OpenCode 的 SQLite 以只读模式打开，不影响正在运行的
+  OpenCode。`--redact` 完全隐藏消息摘要。
+- **`atb serve`** 启动本地控制台（<http://127.0.0.1:8766>）：汇总条、按
+  agent 的今日泳道、带证据标签的任务详情，SSE 实时刷新——纯标准库 Python
+  加原生 JS/CSS，完全离线。JSON API v1 契约见 `docs/api.md`。

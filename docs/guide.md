@@ -369,21 +369,67 @@ Notes:
 | Command | Use |
 |---|---|
 | `atb init` | Create `.taskboard/` and default config. |
-| `atb new "title" --agent X [--allow G]... [--deny G]... [--depends ID]...` | Create a task sheet in `todo`. |
+| `atb new "title" --agent X [--allow G]... [--deny G]... [--depends ID]... [--body @FILE\|-] [--copy-to DIR]` | Create a task sheet in `todo`; `--body` writes the Markdown body from a UTF-8 file or stdin, `--copy-to DIR` also copies the sheet to `DIR/ATB_TASK_<ID>.md`. |
+| `atb edit ID [--body @FILE\|-] [--title T] [--agent A] [--add-allow G] [--remove-allow G] [--add-deny G] [--remove-deny G] [--copy-to DIR]` | Edit a sheet without hand-editing TOML (repeatable add/remove options). |
 | `atb list [--status S]` / `atb show ID` | Inspect sheets. |
 | `atb start ID [--base REV] [--force]` | Open/reuse the worktree and set `doing`. |
-| `atb prompt ID [--lang zh\|en]` | Print the complete handoff. |
+| `atb prompt ID [--lang zh\|en]` | Print the complete handoff (with a "run atb sync first" line when the branch is behind). |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a per-window forwarding checklist. |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until status/commits/new-task changes, stalls, or activity changes. |
 | `atb check ID [--test] [--strict] [--isolate-home] [--json]` | Scope check; optionally run tests (isolated `HOME` option). |
-| `atb status [--json]` | Board metrics, `DIRTY`, `IDLE`, last test, `READY` (`ready`/`blockers`), and target upstream state. |
+| `atb status [--json]` | Board metrics, `DIRTY`, `IDLE`, last test, `READY` (`ready`/`blockers`), upstream state, and a `sync` suggestion for the first three tasks behind target. |
 | `atb conflicts [--json]` | File overlap, merge-tree conflicts, and drift. |
 | `atb review ID [--out FILE] [--lang zh\|en] [--json]` | Build an enriched review sheet or structured JSON (`ready`/`blockers`); flips `doing`/`rework` to `review`. |
 | `atb rework ID --note TEXT` (or `@file`) | Send back and append rework notes. |
-| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify and finish; optional merge, cleanup, and non-forced push (`push_after_done`). |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify and finish; `--merge` refuses not-ready tasks (same blockers as `review --json`) unless `--force` or `require_ready_for_done = false`; optional cleanup and non-forced push. |
+| `atb sync ID [--rebase \| --merge] [--dry-run]` | Bring the target up to date inside the task worktree (default `--rebase`; refuses dirty worktrees, aborts conflicts back to the original state, predicts them with `--dry-run`). |
+| `atb stats [--since YYYY-MM-DD] [--agent NAME] [--json] [--lang zh\|en]` | Per-agent throughput, rework rate, cycle times and test health. |
+| `atb sessions [--since SPEC] [--adapter NAME] [--redact] [--json] [--lang zh\|en]` | Read-only view of local Claude Code / Codex / Gemini CLI / OpenCode sessions, mapped to tasks. |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches for `done`/`dropped` tasks. |
-| `atb doctor [--json]` | One-shot read-only environment and board health check. |
+| `atb doctor [--json]` | One-shot read-only environment and board health check (one line per session adapter). |
 | `atb log ID [--json] [--verbose]` | Chronological status changes, rework notes, test runs, and merges. |
 | `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static HTML board (default `zh`, stall threshold `120` min). |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | Serve the local read-only console and JSON API v1 (stdlib only, no CDN). |
 
 All commands accept `--help`.
+
+## Sheet bodies, readiness, statistics, sync, sessions and serve
+
+- **Bodies without hand-editing.** `atb new "Fix login" --agent opencode
+  --body @task.md` (or `--body -` for stdin) writes the Markdown body in one
+  step; bodies are normalized to one blank line after the closing `+++` and a
+  single trailing newline. `atb edit T001 --body @new.md --add-allow
+  "tests/**" --remove-deny "docs/**" --title "New title"` edits metadata and
+  scope without touching the TOML by hand; `done`/`dropped` tasks are
+  refused. `--copy-to DIR` (on `new` and `edit`) writes an extra copy to
+  `DIR/ATB_TASK_<ID>.md` for editors that only open one directory; the
+  directory must already exist.
+- **`done --merge` is gated.** It refuses tasks with blockers, using exactly
+  the same evaluation as `review --json` (scope violations, uncommitted
+  changes, failing or missing tests, merge conflicts, doctor failures). If
+  the sheet has no test command and no test record, the refusal explains how
+  to configure one. `--force` merges anyway and lists what it ignored (it
+  still allows finishing a `doing` task, as before); set
+  `require_ready_for_done = false` in `config.toml` to warn instead of
+  refusing.
+- **`atb stats`** answers "who should get the next task": per agent it shows
+  done/dropped/active counts, the share of tasks with at least one rework,
+  the start→done cycle median/P90, the review-wait median, and the failure
+  rate of the last recorded test run. Tasks without committed history are
+  excluded from the cycle metrics and counted in a footer note.
+- **`atb sync T001`** updates a task branch inside its worktree: rebase onto
+  the target by default (`--merge` for a merge commit), refusal on uncommitted
+  changes, automatic `--abort` back to the original state on conflict with
+  the conflicted files listed, and `--dry-run` to predict the outcome with
+  `git merge-tree`. When the branch is on a remote the output reminds the
+  agent to `git push --force-with-lease` themselves — atb never pushes it.
+- **`atb sessions`** observes every installed agent read-only (Claude Code,
+  Codex, Gemini CLI, OpenCode; other tools via the
+  `agent_taskboard.adapters` entry point). Sessions map to tasks by working
+  directory or branch; the rest are free sessions. Big JSONL stores are read
+  head+tail only; OpenCode's SQLite database is opened `mode=ro` so a running
+  OpenCode is never disturbed. `--redact` hides message summaries entirely.
+- **`atb serve`** serves the local console (<http://127.0.0.1:8766>): summary
+  strip, per-agent swimlanes for today, task detail with evidence chips, and
+  live updates over SSE — pure standard-library Python with vanilla JS/CSS,
+  fully offline. See `docs/api.md` for the JSON API v1 contract.

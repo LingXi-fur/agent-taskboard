@@ -37,3 +37,7 @@ atb = "agent_taskboard.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# the atb serve console ships with the wheel: pure JS/CSS/JSON, no build step
+agent_taskboard = ["web/*", "web/locales/*"]

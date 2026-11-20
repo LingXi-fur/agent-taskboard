@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>atb console</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-theme="auto">
+  <header>
+    <div class="header-row">
+      <h1>atb</h1>
+      <div id="summary" class="summary" aria-live="polite"></div>
+      <div class="header-actions">
+        <button id="theme-toggle" type="button" title="theme (t)"></button>
+        <button id="lang-toggle" type="button" title="language"></button>
+      </div>
+    </div>
+    <p id="upstream" class="upstream"></p>
+  </header>
+
+  <main>
+    <section id="swimlanes-sec" aria-labelledby="swimlanes-heading">
+      <h2 id="swimlanes-heading"></h2>
+      <div id="swimlanes"></div>
+    </section>
+
+    <section id="sessions-sec" aria-labelledby="sessions-heading" hidden>
+      <h2 id="sessions-heading"></h2>
+      <div id="sessions"></div>
+    </section>
+
+    <div class="split">
+      <section id="task-list-sec" aria-labelledby="task-list-heading">
+        <h2 id="task-list-heading"></h2>
+        <table id="task-table">
+          <thead><tr id="task-headers"></tr></thead>
+          <tbody id="task-rows"></tbody>
+        </table>
+      </section>
+
+      <section id="detail-sec" aria-labelledby="detail-heading" hidden>
+        <div class="detail-head">
+          <h2 id="detail-heading"></h2>
+          <button id="detail-close" type="button" title="close (Esc)">&times;</button>
+        </div>
+        <div id="detail"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span id="status-line"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
