@@ -60,17 +60,22 @@ def render_prompt(
     branch: str,
     test_cmd: str,
     lang: str = "zh",
+    sync_hint: str = "",
 ) -> str:
     """Render the handoff prompt for ``sheet`` in language ``lang``."""
     rework, body = split_rework(sheet.body)
     if lang == "en":
-        return _render_en(sheet, worktree, branch, test_cmd, rework, body)
-    return _render_zh(sheet, worktree, branch, test_cmd, rework, body)
+        return _render_en(
+            sheet, worktree, branch, test_cmd, rework, body, sync_hint
+        )
+    return _render_zh(
+        sheet, worktree, branch, test_cmd, rework, body, sync_hint
+    )
 
 
 def _render_zh(
     sheet: Sheet, worktree: str, branch: str, test_cmd: str,
-    rework: str, body: str,
+    rework: str, body: str, sync_hint: str = "",
 ) -> str:
     parts: list[str] = []
     if rework.strip():
@@ -93,6 +98,9 @@ def _render_zh(
     parts.append(f"cd {worktree}")
     parts.append("```")
     parts.append("")
+    if sync_hint:
+        parts.append(sync_hint)
+        parts.append("")
     parts.append("## 允许修改（allow）")
     parts.append("")
     parts.append(_bullet(sheet.allow))
@@ -123,7 +131,7 @@ def _render_zh(
 
 def _render_en(
     sheet: Sheet, worktree: str, branch: str, test_cmd: str,
-    rework: str, body: str,
+    rework: str, body: str, sync_hint: str = "",
 ) -> str:
     parts: list[str] = []
     if rework.strip():
@@ -146,6 +154,9 @@ def _render_en(
     parts.append(f"cd {worktree}")
     parts.append("```")
     parts.append("")
+    if sync_hint:
+        parts.append(sync_hint)
+        parts.append("")
     parts.append("## Allowed (allow)")
     parts.append("")
     parts.append(_bullet(sheet.allow))
