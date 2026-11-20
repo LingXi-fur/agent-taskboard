@@ -17,10 +17,10 @@ import sys
 import tempfile
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import checks, config, doctor, gc, gitops, history, prompts, render, scope, stats
+from . import adapters, checks, config, doctor, gc, gitops, history, prompts, render, scope, stats
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -2144,6 +2144,299 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# sessions (agent adapters, read-only)
+# --------------------------------------------------------------------------- #
+
+#: Sort fallback for sessions without any timestamp.
+_EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
+
+def _parse_sessions_since(spec: str | None) -> tuple[object, str]:
+    """Turn a --since value into ``(datetime, spec)``; default 24 hours.
+
+    Accepts a relative window (``6h``/``3d``), a date (``YYYY-MM-DD``, local
+    midnight) or a full ISO datetime.
+    """
+    if not spec:
+        spec = "24h"
+    text = spec.strip()
+    relative = re.fullmatch(r"(\d+)\s*([hd])", text.lower())
+    if relative:
+        amount = int(relative.group(1))
+        delta = timedelta(hours=amount) if relative.group(2) == "h" else timedelta(days=amount)
+        return datetime.now().astimezone() - delta, spec
+    raw = text[:-1] + "+00:00" if text.endswith("Z") else text
+    for parser in (
+        lambda: datetime.strptime(text, "%Y-%m-%d").astimezone(),
+        lambda: datetime.fromisoformat(raw).astimezone(),
+    ):
+        try:
+            return parser(), spec
+        except ValueError:
+            continue
+    raise AtbError(
+        f"invalid --since {spec!r}: use Nh/Nd, YYYY-MM-DD or an ISO datetime"
+    )
+
+
+def _collect_sessions(
+    since: object, adapter_filter: str | None
+) -> tuple[list, list[dict]]:
+    """Gather sessions from every adapter; one adapter failing never stops."""
+    state = adapters.load_adapters()
+    sessions: list = []
+    entries: list[dict] = []
+    for error in state.errors:
+        entries.append({
+            "name": error["adapter"],
+            "available": False,
+            "error": f"failed to load: {error['error']}",
+            "count": 0,
+        })
+    for adapter in state.adapters:
+        if adapter_filter and adapter.name != adapter_filter:
+            continue
+        entry = {
+            "name": adapter.name,
+            "available": False,
+            "error": None,
+            "count": 0,
+        }
+        try:
+            entry["available"] = bool(adapter.available())
+        except Exception as exc:  # adapter bugs must not break the page
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+        if entry["available"] and entry["error"] is None:
+            try:
+                for session in adapter.sessions(since):
+                    sessions.append(session)
+                    entry["count"] += 1
+            except Exception as exc:
+                entry["error"] = f"{type(exc).__name__}: {exc}"
+        entries.append(entry)
+    return sessions, entries
+
+
+def _session_task_maps(
+    cfg: config.Config, sheets: list[Sheet]
+) -> tuple[list[tuple[Path, str]], dict[str, str]]:
+    """Worktree paths and branches of started tasks, for session mapping."""
+    root = config.resolve_worktree_root(cfg)
+    worktrees: list[tuple[Path, str]] = []
+    branches: dict[str, str] = {}
+    for sheet in sheets:
+        if not sheet.branch:
+            continue
+        worktrees.append(((root / sheet.id).resolve(), sheet.id))
+        branches.setdefault(sheet.branch, sheet.id)
+    worktrees.sort(key=lambda item: item[1])
+    return worktrees, branches
+
+
+def _map_session_to_task(
+    session, worktrees: list[tuple[Path, str]], branches: dict[str, str]
+) -> str | None:
+    """Map a session to a task: worktree cwd first, then branch name."""
+    if session.cwd:
+        try:
+            cwd = Path(session.cwd).resolve()
+        except OSError:
+            cwd = None
+        if cwd is not None:
+            for worktree, task_id in worktrees:
+                if cwd == worktree or worktree in cwd.parents:
+                    return task_id
+    if session.branch:
+        task_id = branches.get(session.branch)
+        if task_id is not None:
+            return task_id
+    return None
+
+
+def _fmt_session_age(moment: object | None) -> str:
+    if moment is None:
+        return "—"
+    seconds = max(0, (datetime.now().astimezone() - moment).total_seconds())
+    if seconds < 3600:
+        return f"{seconds // 60:.0f}m"
+    if seconds < 48 * 3600:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86400:.1f}d"
+
+
+def _fmt_session_tokens(usage: dict | None) -> str:
+    if not usage:
+        return "—"
+    total = sum(usage.values())
+    if total >= 1_000_000:
+        return f"{total / 1_000_000:.1f}M"
+    if total >= 1_000:
+        return f"{total / 1_000:.0f}k"
+    return str(total)
+
+
+_SESSION_TEXTS = {
+    "zh": {
+        "title": "Agent 会话（最近 {spec}，共 {count} 个）",
+        "empty": "Agent 会话（最近 {spec}）：没有会话",
+        "headers": ("adapter", "状态", "任务", "活动", "模型", "tokens"),
+        "summary": "摘要",
+        "free": "自由会话",
+        "unmapped": "未对应任务：{count} 个（自由会话）",
+        "adapter_error": "adapter {name} 报错：{error}",
+        "adapter_missing": "adapter {name} 未检测到存储（跳过）",
+        "states": {
+            "working": "工作中",
+            "waiting": "等待输入",
+            "idle": "空闲",
+            "unknown": "未知",
+        },
+    },
+    "en": {
+        "title": "Agent sessions (last {spec}, {count} total)",
+        "empty": "Agent sessions (last {spec}): none",
+        "headers": ("adapter", "state", "task", "active", "model", "tokens"),
+        "summary": "summary",
+        "free": "free session",
+        "unmapped": "unmapped: {count} free session(s)",
+        "adapter_error": "adapter {name} error: {error}",
+        "adapter_missing": "adapter {name} store not found (skipped)",
+        "states": {
+            "working": "working",
+            "waiting": "waiting",
+            "idle": "idle",
+            "unknown": "unknown",
+        },
+    },
+}
+
+
+def _session_to_row(session, task_id: str | None, redact: bool) -> dict:
+    return {
+        "adapter": session.adapter,
+        "id": session.id,
+        "cwd": session.cwd,
+        "branch": session.branch,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "last_active_at": (
+            session.last_active_at.isoformat()
+            if session.last_active_at
+            else None
+        ),
+        "state": session.state,
+        "model": session.model,
+        "last_message": None if redact else session.last_message,
+        "usage": session.usage,
+        "task": task_id,
+        "mapped": task_id is not None,
+    }
+
+
+def _render_sessions(
+    rows: list[dict], adapter_entries: list[dict], *, lang: str,
+    spec: str, redact: bool,
+) -> str:
+    texts = _SESSION_TEXTS.get(lang, _SESSION_TEXTS["zh"])
+    lines: list[str] = []
+    if not rows:
+        lines.append(texts["empty"].format(spec=spec))
+    else:
+        lines.append(texts["title"].format(spec=spec, count=len(rows)))
+        headers = list(texts["headers"])
+        if not redact:
+            headers.append(texts["summary"])
+        cells: list[list[str]] = []
+        for row in rows:
+            task = row["task"] if row["task"] else texts["free"]
+            line = [
+                row["adapter"],
+                texts["states"].get(row["state"], row["state"]),
+                task,
+                _fmt_session_age(
+                    datetime.fromisoformat(row["last_active_at"])
+                    if row["last_active_at"]
+                    else None
+                ),
+                row["model"] or "—",
+                _fmt_session_tokens(row["usage"]),
+            ]
+            if not redact:
+                line.append(row["last_message"] or "—")
+            cells.append(line)
+        widths = [
+            max(len(header), *(len(line[index]) for line in cells))
+            for index, header in enumerate(headers)
+        ]
+        lines.append(
+            "  ".join(
+                header.ljust(widths[index])
+                for index, header in enumerate(headers)
+            )
+        )
+        for line in cells:
+            lines.append(
+                "  ".join(
+                    cell.ljust(widths[index])
+                    for index, cell in enumerate(line)
+                )
+            )
+        unmapped = sum(1 for row in rows if not row["mapped"])
+        if unmapped:
+            lines.append(texts["unmapped"].format(count=unmapped))
+    for entry in adapter_entries:
+        if entry["error"]:
+            lines.append(
+                texts["adapter_error"].format(
+                    name=entry["name"], error=entry["error"]
+                )
+            )
+        elif not entry["available"]:
+            lines.append(texts["adapter_missing"].format(name=entry["name"]))
+    return "\n".join(lines)
+
+
+def cmd_sessions(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    cfg = config.load_config(repo_root)
+    since, spec = _parse_sessions_since(args.since)
+
+    sessions, adapter_entries = _collect_sessions(since, args.adapter)
+    sheets = _load_tasks(repo_root)
+    worktrees, branches = _session_task_maps(cfg, sheets)
+
+    rows = [
+        _session_to_row(
+            session, _map_session_to_task(session, worktrees, branches),
+            args.redact,
+        )
+        for session in sorted(
+            sessions,
+            key=lambda item: item.last_active_at or item.started_at or _EPOCH,
+            reverse=True,
+        )
+    ]
+
+    if args.json:
+        payload = {
+            "since": since.isoformat(),
+            "since_spec": spec,
+            "redacted": bool(args.redact),
+            "adapters": adapter_entries,
+            "sessions": rows,
+            "unmapped": sum(1 for row in rows if not row["mapped"]),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            _render_sessions(
+                rows, adapter_entries, lang=args.lang, spec=spec,
+                redact=args.redact,
+            )
+        )
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -2353,6 +2646,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--json", action="store_true")
     p_stats.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
     p_stats.set_defaults(func=cmd_stats)
+    p_sessions = sub.add_parser(
+        "sessions", help="list local agent sessions (read-only, all stores)"
+    )
+    p_sessions.add_argument(
+        "--since", metavar="SPEC",
+        help="how far back to look: 6h / 3d / YYYY-MM-DD / ISO datetime "
+             "(default: 24h)",
+    )
+    p_sessions.add_argument(
+        "--adapter", metavar="NAME",
+        help="only one adapter (claude-code, codex, gemini-cli, opencode)",
+    )
+    p_sessions.add_argument(
+        "--redact", action="store_true",
+        help="hide message summaries entirely",
+    )
+    p_sessions.add_argument("--json", action="store_true")
+    p_sessions.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
+    p_sessions.set_defaults(func=cmd_sessions)
 
     return parser
 

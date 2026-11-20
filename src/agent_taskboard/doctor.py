@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -306,6 +307,72 @@ def _check_upstream(cfg: config.Config | None, repo_root: Path) -> dict[str, Any
     )
 
 
+def _check_adapters() -> list[dict[str, Any]]:
+    """One entry per session adapter: OK / INFO (store missing) / WARN (error).
+
+    A broken or missing adapter is never a FAIL: observing sessions is
+    optional, so it must not turn `atb doctor` red.
+    """
+    from . import adapters
+
+    items: list[dict[str, Any]] = []
+    state = adapters.load_adapters()
+    for failure in state.errors:
+        items.append(
+            _check_entry(
+                f"adapter:{failure['adapter']}",
+                "WARN",
+                f"adapter failed to load: {failure['error']}",
+                "fix or uninstall the plugin",
+            )
+        )
+    for adapter in state.adapters:
+        name = getattr(adapter, "name", type(adapter).__name__)
+        try:
+            available = bool(adapter.available())
+        except Exception as exc:
+            items.append(
+                _check_entry(
+                    f"adapter:{name}",
+                    "WARN",
+                    f"adapter error: {type(exc).__name__}: {exc}",
+                    "the store may have changed; update atb",
+                )
+            )
+            continue
+        if not available:
+            items.append(
+                _check_entry(
+                    f"adapter:{name}",
+                    "INFO",
+                    "store not found; adapter inactive",
+                    "install the tool or point its ATB_*_HOME at the store",
+                )
+            )
+            continue
+        # cheap read probe: a store that exists but cannot be parsed is a WARN
+        try:
+            probe_since = datetime.now(timezone.utc) - timedelta(minutes=5)
+            for _ in adapter.sessions(probe_since):
+                pass  # only recent files are read, so this stays fast
+        except Exception as exc:
+            items.append(
+                _check_entry(
+                    f"adapter:{name}",
+                    "WARN",
+                    f"adapter error: {type(exc).__name__}: {exc}",
+                    "the store format may have changed; update atb",
+                )
+            )
+            continue
+        items.append(
+            _check_entry(
+                f"adapter:{name}", "OK", "store found; sessions observable"
+            )
+        )
+    return items
+
+
 def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
     """Run all read-only health checks and return ``(payload, exit_code)``."""
     git_item = _check_git_version()
@@ -315,6 +382,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
     upstream_item = _check_upstream(cfg, repo_root)
     leftover_item = _check_gc_leftovers(valid_sheets, cfg, repo_root)
     orphan_item = _check_orphan_worktrees(valid_sheets, cfg, repo_root)
+    adapter_items = _check_adapters()
 
     items = [
         git_item,
@@ -324,7 +392,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
         upstream_item,
         leftover_item,
         orphan_item,
-    ]
+    ] + adapter_items
     has_fail = any(item["status"] == "FAIL" for item in items)
     has_warn = any(item["status"] == "WARN" for item in items)
     overall = "FAIL" if has_fail else ("WARN" if has_warn else "OK")
