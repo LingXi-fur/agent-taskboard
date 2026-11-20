@@ -1,5 +1,7 @@
 # Contributing / 贡献指南
 
+Chinese version: [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md).
+
 Thanks for helping improve `atb`! Keep it small, local and dependency-free.
 感谢你改进 `atb`！请保持它小巧、纯本地、零依赖。
 

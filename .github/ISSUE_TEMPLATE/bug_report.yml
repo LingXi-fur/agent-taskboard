@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a problem with atb.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: atb version
+      description: "Output of `atb --version`.（请粘贴 `atb --version` 的输出。）"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: "OS and version, e.g. Windows 11, macOS 15.2 or Ubuntu 24.04.（请填写操作系统及版本。）"
+    validations:
+      required: true
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      description: "Output of `python3 --version`.（请粘贴 `python3 --version` 的输出。）"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: "Minimal commands and what happened, in order.（请按顺序列出最小复现命令与现象。）"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: "What you expected to happen.（请描述期望的结果。）"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: "What actually happened, including error output.（请描述实际结果，并附上相关报错输出。）"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: atb doctor output
+      description: "Run `atb doctor` and paste the output. Redact anything sensitive first.（请运行 `atb doctor` 并粘贴输出，粘贴前请先脱敏。）"
+    validations:
+      required: false
