@@ -335,6 +335,29 @@ def evaluate_readiness(
     return len(blockers) == 0, blockers
 
 
+def readiness_from_info(
+    info: dict, *, lang: str = "zh"
+) -> tuple[bool, list[dict[str, str]]]:
+    """Evaluate ``(ready, blockers)`` from a review ``info`` dict.
+
+    This is the single entry point used by ``review --json``, the board
+    READY column and ``done --merge`` so they can never disagree.
+    """
+    return evaluate_readiness(
+        task_id=info["id"],
+        denied=list(info["denied"]),
+        outside=list(info["outside"]),
+        uncommitted=list(info["uncommitted"]),
+        test_result=info["test"],
+        target=info.get("target") or "main",
+        target_conflicts=list(info.get("target_conflicts") or []),
+        target_merge_error=info.get("target_merge_error"),
+        conflicts=list(info["conflicts"]),
+        doctor_fails=list(info.get("doctor_fails") or []),
+        lang=lang,
+    )
+
+
 def build_review_json(info: dict, *, lang: str = "zh") -> dict:
     """Build a structured JSON dict corresponding to the review sheet."""
     denied = list(info["denied"])
@@ -346,17 +369,8 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
     target_merge_error = info.get("target_merge_error")
     target = info.get("target") or "main"
 
-    ready, blockers = evaluate_readiness(
-        task_id=info["id"],
-        denied=denied,
-        outside=outside,
-        uncommitted=uncommitted,
-        test_result=info["test"],
-        target=target,
-        target_conflicts=target_conflicts,
-        target_merge_error=target_merge_error,
-        conflicts=conflicts,
-        doctor_fails=doctor_fails,
+    ready, blockers = readiness_from_info(
+        info,
         lang=lang,
     )
 
