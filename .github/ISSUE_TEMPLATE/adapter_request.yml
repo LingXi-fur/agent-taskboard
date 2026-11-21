@@ -1,0 +1,25 @@
+name: Adapter request
+description: Ask for support of another coding agent's session store.
+labels: ["enhancement"]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Agent tool
+      description: "Which coding agent tool should atb support?（想要 atb 支持哪款编码 agent 工具？）"
+    validations:
+      required: true
+  - type: textarea
+    id: store
+    attributes:
+      label: Session store location and format
+      description: "Where does this tool keep its sessions on this machine (paths and format)? Redact before pasting: no prompts, message text or API keys.（请说明该工具会话记录在本机的位置与格式；粘贴前务必先脱敏，不要包含提示词、消息原文或任何密钥。）"
+    validations:
+      required: true
+  - type: input
+    id: tool_version
+    attributes:
+      label: Tool version
+      description: "Version of the tool you observed, if known.（请填写该工具的版本号，如已知。）"
+    validations:
+      required: false

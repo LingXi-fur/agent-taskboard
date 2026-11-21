@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an idea or improvement for atb.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: "What problem are you trying to solve? Which part of your workflow is missing or painful?（请说明要解决什么问题，目前工作流中哪一步缺失或不顺手。）"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: "What should happen instead? Keep atb small, local and dependency-free.（请描述建议的做法，注意保持 atb 小巧、纯本地、零依赖。）"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: "Other approaches, tools or workarounds you have considered, and why they do not fit.（请列出考虑过的替代方案，以及它们为何不满足需求。）"
+    validations:
+      required: false
