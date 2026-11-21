@@ -733,7 +733,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     worktree = config.resolve_worktree_root(cfg) / sheet.id
 
-    committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+    committed = checks.task_committed(sheet, cfg, repo_root)
     uncommitted = gitops.uncommitted_files(worktree) if worktree.exists() else []
     all_paths = _dedup(committed + uncommitted)
 
@@ -741,7 +741,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     denied = [p for p in all_paths if classification[p] == "denied"]
     outside = [p for p in all_paths if classification[p] == "outside"]
 
-    ahead, behind = gitops.rev_list_count(sheet.base, sheet.branch, cwd=repo_root)
+    ahead, behind = checks.task_ahead_behind(sheet, cfg, repo_root)
 
     exit_code = 1 if (denied or outside) else 0
 
@@ -968,7 +968,7 @@ def _task_board_row(
             ahead, behind = gitops.rev_list_count(cfg.target, sheet.branch, cwd=repo_root)
         entries = gitops.uncommitted_entries(worktree)
         uncommitted_paths = [path for _status, paths in entries for path in paths]
-        committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+        committed = checks.task_committed(sheet, cfg, repo_root)
         all_paths = list(dict.fromkeys(committed + uncommitted_paths))
         denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
         row["ahead"] = ahead
@@ -1261,7 +1261,7 @@ def _task_doctor_fails(repo_root: Path, task_id: str) -> list[str]:
 
 def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     """Gather everything the review template needs into one plain dict."""
-    committed = checks.task_committed(sheet, repo_root)
+    committed = checks.task_committed(sheet, cfg, repo_root)
     uncommitted = checks.task_uncommitted(sheet, cfg)
     all_paths = list(dict.fromkeys(committed + uncommitted))
     denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
@@ -1296,7 +1296,9 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "last_test_detail": last_test_detail,
         "status_history": status_events,
         "doctor_fails": _task_doctor_fails(repo_root, sheet.id),
-        "diffstat": gitops.diff_stat(sheet.base, sheet.branch, cwd=repo_root),
+        "diffstat": gitops.diff_stat(
+            checks.task_base_rev(sheet, cfg, repo_root), sheet.branch, cwd=repo_root
+        ),
         "conflicts": conflicts,
         "mergeable": mergeable,
         "drift": drift,
@@ -1386,7 +1388,7 @@ def _build_review_json(
 ) -> str:
     info = _review_info_with_target(sheet, cfg, repo_root)
     info["structured_diffstat"] = _structured_diffstat(
-        sheet.base, sheet.branch, repo_root
+        checks.task_base_rev(sheet, cfg, repo_root), sheet.branch, repo_root
     )
     payload = render.build_review_json(info, lang=lang)
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
@@ -1478,7 +1480,7 @@ def _write_status(repo_root: Path, sheet: Sheet, status: str) -> None:
 def _done_blockers(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[str]:
     """Return the reasons ``done`` must refuse, mirroring ``check`` plus tests."""
     try:
-        committed = gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+        committed = checks.task_committed(sheet, cfg, repo_root)
     except gitops.GitError as exc:
         return [f"cannot read branch changes ({exc})"]
     worktree = checks.resolve_worktree(cfg, sheet)

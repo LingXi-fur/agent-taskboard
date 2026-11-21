@@ -22,8 +22,32 @@ def resolve_worktree(cfg: config.Config, sheet: Sheet) -> Path:
     return config.resolve_worktree_root(cfg) / sheet.id
 
 
-def task_committed(sheet: Sheet, repo_root: Path) -> list[str]:
-    return gitops.changed_files(sheet.base, sheet.branch, cwd=repo_root)
+def task_base_rev(sheet: Sheet, cfg: config.Config, repo_root: Path) -> str:
+    """Return the revision the task's committed changes start from.
+
+    Uses the target branch: git's ``target...branch`` three-dot form diffs
+    from ``merge-base(target, branch)``, so commits the task absorbed from
+    the target (``atb sync``, fast-forward of the target) are not counted as
+    task changes.  Falls back to the recorded ``sheet.base`` when the target
+    branch cannot be resolved (e.g. it does not exist).
+    """
+    if cfg.target and gitops.branch_exists(cfg.target, cwd=repo_root):
+        return cfg.target
+    return sheet.base
+
+
+def task_committed(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[str]:
+    start = task_base_rev(sheet, cfg, repo_root)
+    return gitops.changed_files(start, sheet.branch, cwd=repo_root)
+
+
+def task_ahead_behind(
+    sheet: Sheet, cfg: config.Config, repo_root: Path
+) -> tuple[int, int]:
+    """Return ``(ahead, behind)`` of the task branch relative to the target."""
+    return gitops.rev_list_count(
+        task_base_rev(sheet, cfg, repo_root), sheet.branch, cwd=repo_root
+    )
 
 
 def task_uncommitted(sheet: Sheet, cfg: config.Config) -> list[str]:
@@ -34,7 +58,7 @@ def task_uncommitted(sheet: Sheet, cfg: config.Config) -> list[str]:
 
 
 def task_changed_paths(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[str]:
-    return list(dict.fromkeys(task_committed(sheet, repo_root) + task_uncommitted(sheet, cfg)))
+    return list(dict.fromkeys(task_committed(sheet, cfg, repo_root) + task_uncommitted(sheet, cfg)))
 
 
 def classify_violations(
