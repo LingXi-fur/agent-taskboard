@@ -116,6 +116,9 @@ class SessionsTests(unittest.TestCase):
         (repo / ".taskboard" / "config.toml").write_text(
             'worktree_root = "../wts"\n', encoding="utf-8"
         )
+        (repo / ".gitignore").write_text(
+            ".taskboard/runs/\n.taskboard/notes/\n", encoding="utf-8"
+        )
         for tid, title in (("T001", "Demo T001"), ("T002", "Other task")):
             sheet = sheet_mod.Sheet(
                 id=tid, title=title, agent="opencode", status="todo",

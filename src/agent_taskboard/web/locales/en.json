@@ -80,7 +80,8 @@
     "status": "{from} → {to}",
     "test": "test exit {code}",
     "rework": "rework",
-    "merge": "merged"
+    "merge": "merged",
+    "note": "note"
   },
   "keyboardHint": "keyboard: ↑/↓ select · Enter open · Esc close · c copy · t theme",
   "laneEvents": "{count} event(s)",

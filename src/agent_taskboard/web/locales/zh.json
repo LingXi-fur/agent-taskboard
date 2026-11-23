@@ -80,7 +80,8 @@
     "status": "{from} → {to}",
     "test": "测试退出码 {code}",
     "rework": "返工",
-    "merge": "已合并"
+    "merge": "已合并",
+    "note": "备注"
   },
   "keyboardHint": "键盘：↑/↓ 选择 · Enter 打开 · Esc 关闭 · c 复制 · t 主题",
   "laneEvents": "{count} 个事件",

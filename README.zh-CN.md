@@ -134,6 +134,7 @@ created = 2026-11-14T08:00:00Z
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或安全清理 `done`/`dropped` 任务遗留的 worktree 与分支（只用 `git branch -d`） | 已实现 |
 | `atb doctor [--json]` | 一次性只读环境体检：git 版本、配置、任务单、活跃 worktree、残留与孤儿 worktree | 已实现 |
 | `atb log ID [--json] [--verbose]` | 按时间线追溯单个任务的历史：状态变迁、返工记录、测试运行与合并提交 | 已实现 |
+| `atb note ID [TEXT] [--by NAME] [--json] [--lang zh\|en]` | 追加一条简短的任务备注（`@FILE` 读取 UTF-8 文件）或列出全部备注；备注会出现在 `atb log` 时间线中，`atb review` 显示最近 3 条 | 已实现 |
 | `atb board --html out.html [--stall MIN] [--lang zh\|en]` | 导出单文件静态 HTML 看板（含未提交/空闲/可合并列，悬停显示 blockers，卡住高亮及中英双语，默认 `zh`） | 已实现 |
 | `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待任务状态/分支提交/新增任务单变化，或 stall/activity 告警，逐行打印摘要后退出（超时退出码 3） | 已实现 |
