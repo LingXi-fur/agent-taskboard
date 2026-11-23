@@ -235,7 +235,14 @@ class ServeTests(unittest.TestCase):
 
         status, prompt, _ = self._get("/api/v1/tasks/T001/prompt")
         self.assertEqual(status, 200)
-        self.assertIn(str(self.base / "wts" / "T001"), prompt["text"])
+        # Windows temp dirs may come back as 8.3 short names (RUNNER~1)
+        # while atb reports the long path, so accept either spelling.
+        worktree = self.base / "wts" / "T001"
+        spellings = {str(worktree), str(worktree.resolve())}
+        self.assertTrue(
+            any(path in prompt["text"] for path in spellings),
+            f"none of {sorted(spellings)} in prompt text",
+        )
         self.assertIn("Do NOT push", prompt["text"])
 
     def test_task_not_found(self):
