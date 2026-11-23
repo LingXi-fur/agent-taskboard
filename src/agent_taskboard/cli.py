@@ -933,7 +933,7 @@ def _mark_missing_row(
 ) -> dict:
     row["missing"] = True
     if sheet.status == "review":
-        ready, blockers = render.evaluate_readiness(
+        ready, blockers, warnings = render.evaluate_readiness(
             task_id=sheet.id,
             test_result=row["test"],
             missing_reason=reason,
@@ -941,6 +941,7 @@ def _mark_missing_row(
         )
         row["ready"] = ready
         row["blockers"] = blockers
+        row["warnings"] = warnings
     return row
 
 
@@ -968,6 +969,7 @@ def _task_board_row(
         "idle_seconds": None,
         "ready": None,
         "blockers": [],
+        "warnings": [],
     }
     if sheet.status not in checks.ACTIVE_STATUSES:
         return row
@@ -1024,7 +1026,7 @@ def _task_board_row(
                     )
             except gitops.GitError as exc:
                 doctor_fails.append(f"[active] {sheet.id} worktree error: {exc}")
-            ready, blockers = render.evaluate_readiness(
+            ready, blockers, warnings = render.evaluate_readiness(
                 task_id=sheet.id,
                 denied=denied,
                 outside=outside,
@@ -1038,6 +1040,7 @@ def _task_board_row(
             )
             row["ready"] = ready
             row["blockers"] = blockers
+            row["warnings"] = warnings
     except (gitops.GitError, OSError):
         return _mark_missing_row(
             row, sheet, reason="branch or worktree error", lang=lang
@@ -1070,27 +1073,13 @@ def _build_board_rows(
             task_conflicts, _, _ = _conflicts_for(row["id"], conflicts)
             if not task_conflicts:
                 continue
-            _, extra_blockers = render.evaluate_readiness(
+            _, _extra_blockers, extra_warnings = render.evaluate_readiness(
                 task_id=row["id"],
                 test_result="ok",
                 conflicts=task_conflicts,
                 lang=lang,
             )
-            existing_mc = next(
-                (b for b in row["blockers"] if b["code"] == "merge_conflict"),
-                None,
-            )
-            if existing_mc is not None and extra_blockers:
-                sep = "；" if lang != "en" else "; "
-                existing_mc["message"] = (
-                    f"{existing_mc['message']}{sep}{extra_blockers[0]['message']}"
-                )
-            else:
-                row["blockers"].extend(extra_blockers)
-                row["blockers"].sort(
-                    key=lambda b: _BLOCKER_ORDER.get(b["code"], 99)
-                )
-            row["ready"] = False
+            row["warnings"].extend(extra_warnings)
     return rows, conflicts
 
 
@@ -1526,17 +1515,18 @@ def _done_blockers(sheet: Sheet, cfg: config.Config, repo_root: Path) -> list[st
 
 def _done_readiness(
     sheet: Sheet, cfg: config.Config, repo_root: Path
-) -> list[dict[str, str]]:
-    """Readiness blockers for ``done --merge``.
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Readiness ``(blockers, warnings)`` for ``done --merge``.
 
     Uses the exact same inputs as ``review --json`` (``_review_info`` plus the
     target-conflict probe), so the READY column, review and merge can never
-    disagree about what "ready" means.
+    disagree about what "ready" means. Only target-branch conflicts block;
+    overlaps with other active tasks are warnings.
     """
-    _, blockers = render.readiness_from_info(
+    _, blockers, warnings = render.readiness_from_info(
         _review_info_with_target(sheet, cfg, repo_root)
     )
-    return blockers
+    return blockers, warnings
 
 
 def _format_blockers(blockers: list[dict[str, str]]) -> list[str]:
@@ -1619,7 +1609,9 @@ def cmd_done(args: argparse.Namespace) -> int:
     # Nothing is written or merged when the task is blocked; --force overrides
     # (and lists what it ignored), and require_ready_for_done = false downgrades
     # the refusal to a warning.
-    merge_blockers = _done_readiness(sheet, cfg, repo_root)
+    merge_blockers, merge_warnings = _done_readiness(sheet, cfg, repo_root)
+    for warning in merge_warnings:
+        print(f"提示：{warning['message']}", file=sys.stderr)
     if merge_blockers:
         if args.force:
             _report_merge_blockers(

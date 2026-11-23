@@ -57,8 +57,11 @@ The `atb review --json` payload, plus the full event list:
 `{id, title, agent, status, branch, base, scope{denied, outside,
 uncommitted}, test{result, last_run}, activity{dirty, idle_seconds,
 rework_count, status_history}, doctor_fails, diffstat{files, totals},
-conflicts, mergeable, drift, acceptance[{text, checked}], ready, blockers,
-events}`.
+conflicts, mergeable, drift, acceptance[{text, checked}], notes, ready,
+blockers, warnings, events}`. `blockers` are the reasons a merge is
+refused (only target-branch conflicts do that); `warnings` are advisory —
+overlaps with other active tasks (`code: task_conflict`) that do not stop
+the merge.
 
 `events` is the chronological `atb log` event list (`status`, `test`,
 `rework`, `merge`), each `{kind, timestamp, time_local, text, ...}`.
@@ -72,8 +75,10 @@ clipboard. No task state is changed.
 ## `GET /api/v1/events?day=YYYY-MM-DD&days=N&task=ID`
 
 The day's timeline for the swimlanes: `{"events": [{task, title, agent,
-kind, timestamp, time_local, text, from, to, exit_code, commit}], "count",
-"range"}`. `kind` is `status`, `test`, `rework` or `merge`. With `day`,
+kind, timestamp, time_local, text, from, to, exit_code, commit, by, note}],
+"count", "range"}`. `kind` is `status`, `test`, `rework`, `merge` or
+`note`; `note` events carry the author in `by` and the full text in
+`note`. `kind` is `status`, `test`, `rework` or `merge`. With `day`,
 events are filtered to the server's local calendar day; with `days=N`, to
 the last N local days (`range` says which). With `task`, to one task.
 Without any window, all events are returned (this walks each task's

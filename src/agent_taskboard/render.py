@@ -164,6 +164,14 @@ def _render_review_zh(info: dict) -> str:
     lines.append("## 冲突情况")
     lines.append("")
     lines.extend(_conflict_lines(info, zh=True))
+    warning_message = _task_conflict_message(
+        info["id"], list(info.get("conflicts") or []), True
+    )
+    if warning_message:
+        lines.append("")
+        lines.append("## 提示")
+        lines.append("")
+        lines.append(f"- {warning_message}")
     lines.append("")
     lines.append("## 验收清单")
     lines.append("")
@@ -216,6 +224,14 @@ def _render_review_en(info: dict) -> str:
     lines.append("## Conflicts")
     lines.append("")
     lines.extend(_conflict_lines(info, zh=False))
+    warning_message = _task_conflict_message(
+        info["id"], list(info.get("conflicts") or []), False
+    )
+    if warning_message:
+        lines.append("")
+        lines.append("## Warnings")
+        lines.append("")
+        lines.append(f"- {warning_message}")
     lines.append("")
     lines.append("## Acceptance checklist")
     lines.append("")
@@ -255,6 +271,28 @@ def parse_acceptance_items(acceptance_text: str) -> list[dict[str, object]]:
     return items
 
 
+def _task_conflict_message(
+    task_id: str, conflicts: list[dict] | tuple[dict, ...], zh: bool
+) -> str | None:
+    """Describe overlaps with other active tasks (a warning, not a blocker)."""
+    if not conflicts:
+        return None
+    other_parts = []
+    for entry in conflicts:
+        other = entry["b"] if entry["a"] == task_id else entry["a"]
+        other_parts.append(f"{other}: {', '.join(entry['files'])}")
+    desc = "; ".join(other_parts)
+    if zh:
+        return (
+            f"与其他活跃任务改动重叠（{desc}）；不阻止合并，"
+            f"合并另一个任务时请留意冲突"
+        )
+    return (
+        f"overlaps other active task(s) ({desc}); this does not block the "
+        f"merge, but watch for conflicts when the other task lands"
+    )
+
+
 def evaluate_readiness(
     *,
     task_id: str,
@@ -269,10 +307,16 @@ def evaluate_readiness(
     doctor_fails: list[str] | tuple[str, ...] = (),
     missing_reason: str | None = None,
     lang: str = "zh",
-) -> tuple[bool, list[dict[str, str]]]:
-    """Compute ``(ready, blockers)`` from pre-collected review/board inputs."""
+) -> tuple[bool, list[dict[str, str]], list[dict[str, str]]]:
+    """Compute ``(ready, blockers, warnings)`` from review/board inputs.
+
+    Only conflicts with the TARGET branch block a merge. Conflicts with
+    other active tasks are reported as warnings: two tasks editing the same
+    file should not deadlock each other when neither conflicts with main.
+    """
     zh = lang != "en"
     blockers: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     if missing_reason:
         blockers.append({
             "code": "missing_branch",
@@ -320,35 +364,19 @@ def evaluate_readiness(
                 else f"cannot verify merge into target {target}: {target_merge_error}"
             ),
         })
-    elif target_conflicts or conflicts:
-        parts: list[str] = []
-        if target_conflicts:
-            files = ", ".join(target_conflicts)
-            parts.append(
-                f"与目标分支 {target} 冲突（{files}）"
-                if zh
-                else f"conflicts with target {target} ({files})"
-            )
-        if conflicts:
-            other_parts = []
-            for entry in conflicts:
-                other = entry["b"] if entry["a"] == task_id else entry["a"]
-                other_parts.append(f"{other}: {', '.join(entry['files'])}")
-            desc = "; ".join(other_parts)
-            parts.append(
-                f"与活跃任务冲突（{desc}）"
-                if zh
-                else f"conflicts with active task(s) ({desc})"
-            )
-        detail = "；".join(parts) if zh else "; ".join(parts)
+    elif target_conflicts:
+        files = ", ".join(target_conflicts)
         blockers.append({
             "code": "merge_conflict",
             "message": (
-                f"存在合并冲突，当前不可直接合并：{detail}"
+                f"与目标分支 {target} 冲突，当前不可直接合并：{files}"
                 if zh
-                else f"not cleanly mergeable: {detail}"
+                else f"conflicts with target {target}: {files}"
             ),
         })
+    warning_message = _task_conflict_message(task_id, conflicts, zh)
+    if warning_message is not None:
+        warnings.append({"code": "task_conflict", "message": warning_message})
     if doctor_fails:
         desc = "；".join(doctor_fails) if zh else "; ".join(doctor_fails)
         blockers.append({
@@ -359,13 +387,13 @@ def evaluate_readiness(
                 else f"doctor reported FAIL(s): {desc}"
             ),
         })
-    return len(blockers) == 0, blockers
+    return len(blockers) == 0, blockers, warnings
 
 
 def readiness_from_info(
     info: dict, *, lang: str = "zh"
-) -> tuple[bool, list[dict[str, str]]]:
-    """Evaluate ``(ready, blockers)`` from a review ``info`` dict.
+) -> tuple[bool, list[dict[str, str]], list[dict[str, str]]]:
+    """Evaluate ``(ready, blockers, warnings)`` from a review ``info`` dict.
 
     This is the single entry point used by ``review --json``, the board
     READY column and ``done --merge`` so they can never disagree.
@@ -396,7 +424,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
     target_merge_error = info.get("target_merge_error")
     target = info.get("target") or "main"
 
-    ready, blockers = readiness_from_info(
+    ready, blockers, warnings = readiness_from_info(
         info,
         lang=lang,
     )
@@ -442,6 +470,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
         "notes": list(info.get("notes") or []),
         "ready": ready,
         "blockers": blockers,
+        "warnings": warnings,
     }
 
 

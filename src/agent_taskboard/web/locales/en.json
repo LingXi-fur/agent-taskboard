@@ -55,7 +55,8 @@
     "diffstat": "diffstat",
     "diffstatValue": "{files} file(s), +{ins} −{del}",
     "blockers": "blockers",
-    "none": "none"
+    "none": "none",
+    "warnings": "warnings"
   },
   "history": "Status history",
   "acceptance": "Acceptance checklist",
@@ -88,5 +89,6 @@
   "laneRange": "{from} — {to} (last {days} days)",
   "completedToggle": "Completed ({count})",
   "currentProject": "this repo",
-  "unknownProject": "unknown directory"
+  "unknownProject": "unknown directory",
+  "swimlanes7": "Last 7 days ({from} — {to}) · per agent"
 }
