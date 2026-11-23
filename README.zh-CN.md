@@ -138,6 +138,7 @@ created = 2026-11-14T08:00:00Z
 | `atb board --html out.html [--stall MIN] [--lang zh\|en]` | 导出单文件静态 HTML 看板（含未提交/空闲/可合并列，悬停显示 blockers，卡住高亮及中英双语，默认 `zh`） | 已实现 |
 | `atb dispatch [--json] [--lang zh\|en]` | 输出转发清单（项目 → 工具·窗口/agent → 任务），只列活跃任务 | 已实现 |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | 阻塞等待任务状态/分支提交/新增任务单变化，或 stall/activity 告警，逐行打印摘要后退出（超时退出码 3） | 已实现 |
+| `atb export --json [--since YYYY-MM-DD] [--max-days N]` | 有版本号、只读的 JSON 导出：任务、各工具原生会话 ID 与 token 用量，供其他工具读取；见 `docs/export.md` | 已实现 |
 
 ### 监视进度
 
