@@ -22,6 +22,7 @@ from .base import (
     home,
     json_lines,
     parse_iso,
+    pretty_model,
     read_head,
     read_tail,
     summarize,
@@ -101,7 +102,7 @@ class ClaudeCodeAdapter:
             if not isinstance(message, dict):
                 continue
             if message.get("model"):
-                model = message["model"]
+                model = pretty_model(str(message["model"]))
             raw_usage = message.get("usage")
             if isinstance(raw_usage, dict):
                 usage = {
