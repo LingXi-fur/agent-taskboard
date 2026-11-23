@@ -188,7 +188,9 @@ def _payload_events(
         except (AtbError, OSError):
             continue  # one unreadable task must not break the timeline
         for event in collected["events"]:
-            if event.get("kind") not in ("status", "test", "rework", "merge"):
+            if event.get("kind") not in (
+                "status", "test", "rework", "merge", "note"
+            ):
                 continue
             if wanted is not None:
                 stamp = _parse_iso_local(event.get("timestamp"))
@@ -206,6 +208,8 @@ def _payload_events(
                 "to": event.get("to"),
                 "exit_code": event.get("exit_code"),
                 "commit": event.get("commit"),
+                "by": event.get("by"),
+                "note": event.get("note"),
             })
     items.sort(key=lambda item: item.get("timestamp") or "")
     if day is not None:

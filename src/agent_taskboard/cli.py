@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import adapters, checks, config, doctor, gc, gitops, history, prompts, render, scope, serve, stats
+from . import adapters, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -155,6 +155,29 @@ def _dedup(paths: list[str]) -> list[str]:
 # init / new / list / show
 # --------------------------------------------------------------------------- #
 
+_GITIGNORE_ENTRIES = (".taskboard/runs/", ".taskboard/notes/")
+
+
+def _ensure_gitignore(repo_root: Path) -> Path:
+    """Make sure local-only .taskboard state stays out of git."""
+    path = repo_root / ".gitignore"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    lines = {line.strip() for line in text.splitlines()}
+    if ".taskboard/" in lines or ".taskboard/*" in lines:
+        return path
+    missing = [entry for entry in _GITIGNORE_ENTRIES if entry not in lines]
+    if not missing:
+        return path
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "".join(f"{entry}\n" for entry in missing)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     tb_dir = repo_root / ".taskboard"
@@ -179,11 +202,14 @@ def cmd_init(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    gitignore_path = _ensure_gitignore(repo_root)
+
     if args.json:
         print(json.dumps({
             "initialized": not already_exists,
             "already_exists": already_exists,
             "config_path": str(config_path),
+            "gitignore": str(gitignore_path),
         }, ensure_ascii=False))
     else:
         print(message)
@@ -1292,6 +1318,7 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "mergeable": mergeable,
         "drift": drift,
         "acceptance": _acceptance_text(sheet.body),
+        "notes": notes.load_notes(repo_root, sheet.id)[-3:],
     }
 
 
@@ -2108,6 +2135,66 @@ def cmd_log(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# note
+# --------------------------------------------------------------------------- #
+
+def _render_note_line(note: dict[str, str], lang: str) -> str:
+    stamp = note.get("timestamp", "")
+    parsed = None
+    raw = stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp
+    try:
+        parsed = datetime.fromisoformat(raw).astimezone()
+    except ValueError:
+        parsed = None
+    when = parsed.strftime("%Y-%m-%d %H:%M") if parsed is not None else stamp
+    by = note.get("by") or "—"
+    lines = note.get("text", "").splitlines() or [""]
+    label = "备注" if lang != "en" else "note"
+    out = [f"{when}  {label}（{by}）：{lines[0]}" if lang != "en"
+           else f"{when}  {label} ({by}): {lines[0]}"]
+    out.extend(f"    {line}" for line in lines[1:])
+    return "\n".join(out)
+
+
+def cmd_note(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    # notes always belong to the MAIN worktree: an agent runs this from its
+    # linked task worktree, and the sheet may not even exist in that checkout
+    board_root = notes.storage_root(repo_root)
+    sheet = _load_task(board_root, args.id)  # missing task -> AtbError
+
+    if args.text is None:
+        stored = notes.load_notes(board_root, sheet.id)
+        if args.json:
+            print(json.dumps(
+                {"id": sheet.id, "notes": stored},
+                ensure_ascii=False, indent=2,
+            ))
+            return 0
+        if not stored:
+            print("（无备注）" if args.lang != "en" else "(no notes)")
+            return 0
+        print("\n".join(_render_note_line(note, args.lang) for note in stored))
+        return 0
+
+    text = args.text
+    if text.startswith("@"):
+        text = _read_body_argument(text)
+    by = args.by or sheet.agent or "unknown"
+    record = notes.append_note(board_root, sheet.id, text, by)
+    if args.json:
+        print(json.dumps(
+            {"id": sheet.id, **record}, ensure_ascii=False, indent=2
+        ))
+    elif args.lang == "en":
+        print(f"noted {sheet.id} ({record['by']})")
+    else:
+        print(f"已记录 {sheet.id} 的备注（{record['by']}）")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # stats
 # --------------------------------------------------------------------------- #
 
@@ -2644,6 +2731,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--json", action="store_true")
     p_log.add_argument("--verbose", action="store_true", help="include the last 5 lines of each test run output")
     p_log.set_defaults(func=cmd_log)
+
+    p_note = sub.add_parser(
+        "note", help="append or list per-task notes (the short status stream)"
+    )
+    p_note.add_argument("id", help="task id, e.g. T001")
+    p_note.add_argument(
+        "text", nargs="?",
+        help="note text, or @FILE to read a UTF-8 file (omit to list notes)",
+    )
+    p_note.add_argument(
+        "--by", help="author name (default: the task sheet's agent)"
+    )
+    p_note.add_argument("--json", action="store_true")
+    p_note.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
+    p_note.set_defaults(func=cmd_note)
 
     p_stats = sub.add_parser(
         "stats", help="per-agent throughput, rework and cycle time"

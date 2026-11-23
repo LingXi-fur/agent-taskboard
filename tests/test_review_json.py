@@ -126,8 +126,8 @@ class ReviewJsonTests(unittest.TestCase):
             expected_top = {
                 "id", "title", "agent", "status", "branch", "base",
                 "scope", "test", "activity", "doctor_fails", "diffstat",
-                "conflicts", "mergeable", "drift", "acceptance", "ready", "blockers",
-                "warnings",
+                "conflicts", "mergeable", "drift", "acceptance", "notes", "ready",
+                "blockers", "warnings",
             }
             self.assertEqual(set(data), expected_top)
             self.assertEqual(data["id"], tid)

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import config, gitops
+from . import config, gitops, notes
 from .errors import AtbError
 from .sheet import Sheet, extract_section, parse
 
@@ -288,6 +288,28 @@ def _rework_events(
     return events, notes
 
 
+def _note_events(repo_root: Path, task_id: str) -> list[dict[str, Any]]:
+    """Per-task notes as timeline events (kind ``note``)."""
+    events: list[dict[str, Any]] = []
+    for record in notes.load_notes(repo_root, task_id):
+        dt = _parse_iso(record["timestamp"])
+        time_local = _format_local(dt) if dt is not None else record["timestamp"]
+        sort_ts = dt.timestamp() if dt is not None else float("inf")
+        first_line = record["text"].splitlines()[0] if record["text"] else ""
+        by = record.get("by") or "—"
+        events.append({
+            "kind": "note",
+            "_sort_ts": sort_ts,
+            "_order": 1,
+            "timestamp": dt.isoformat() if dt is not None else record["timestamp"],
+            "time_local": time_local,
+            "by": by,
+            "note": record["text"],
+            "text": f"{time_local}  备注（{by}）：{first_line}",
+        })
+    return events
+
+
 def rework_count(sheet: Sheet) -> int:
     """Number of rework notes recorded in the sheet body."""
     _events, notes = _rework_events(sheet)
@@ -324,9 +346,10 @@ def collect_task_history(
     branch = sheet.branch or hist_branch
     test_evts = _test_events(repo_root, sheet.id, verbose=verbose)
     rework_evts, rework_notes = _rework_events(sheet)
+    note_evts = _note_events(repo_root, sheet.id)
     merge_evts = _merge_events(repo_root, cfg, sheet.id, branch)
 
-    combined = status_evts + test_evts + rework_evts + merge_evts
+    combined = status_evts + test_evts + note_evts + rework_evts + merge_evts
     combined.sort(key=lambda item: (item["_sort_ts"], item["_order"]))
 
     clean_events: list[dict[str, Any]] = []
@@ -357,6 +380,9 @@ def render_task_history(payload: dict[str, Any], *, verbose: bool = False) -> st
     else:
         for event in events:
             lines.append(event["text"])
+            if event.get("kind") == "note":
+                for extra in event.get("note", "").splitlines()[1:]:
+                    lines.append(f"    {extra}")
             if verbose and event["kind"] == "test":
                 for out_line in event.get("output_tail", []):
                     lines.append(f"    {out_line}")

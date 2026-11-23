@@ -108,6 +108,25 @@ def _activity_history_lines(info: dict, *, zh: bool) -> list[str]:
     return lines
 
 
+def _notes_lines(info: dict, zh: bool) -> list[str]:
+    notes = list(info.get("notes") or [])
+    if not notes:
+        return ["（无备注）" if zh else "(no notes)"]
+    out: list[str] = []
+    for note in notes:
+        stamp = str(note.get("timestamp") or "")
+        raw = stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp
+        try:
+            when = datetime.fromisoformat(raw).astimezone().strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            when = stamp
+        by = note.get("by") or "—"
+        note_lines = str(note.get("text") or "").splitlines() or [""]
+        out.append(f"- {when}  {by}: {note_lines[0]}")
+        out.extend(f"  {line}" for line in note_lines[1:])
+    return out
+
+
 def _render_review_zh(info: dict) -> str:
     lines: list[str] = []
     lines.append(f"# 审查：{info['id']} {info['title']}")
@@ -157,6 +176,10 @@ def _render_review_zh(info: dict) -> str:
     lines.append("## 验收清单")
     lines.append("")
     lines.append(info["acceptance"] or "（无验收小节）")
+    lines.append("")
+    lines.append("## 最近备注")
+    lines.append("")
+    lines.extend(_notes_lines(info, zh=True))
     lines.append("")
     lines.append("## 审查意见")
     lines.append("")
@@ -213,6 +236,10 @@ def _render_review_en(info: dict) -> str:
     lines.append("## Acceptance checklist")
     lines.append("")
     lines.append(info["acceptance"] or "(no acceptance section)")
+    lines.append("")
+    lines.append("## Recent notes")
+    lines.append("")
+    lines.extend(_notes_lines(info, zh=False))
     lines.append("")
     lines.append("## Review notes")
     lines.append("")
@@ -440,6 +467,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
         "mergeable": list(info["mergeable"]),
         "drift": list(info["drift"]),
         "acceptance": parse_acceptance_items(info.get("acceptance") or ""),
+        "notes": list(info.get("notes") or []),
         "ready": ready,
         "blockers": blockers,
         "warnings": warnings,

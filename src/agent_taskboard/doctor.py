@@ -307,6 +307,30 @@ def _check_upstream(cfg: config.Config | None, repo_root: Path) -> dict[str, Any
     )
 
 
+def _check_gitignore(repo_root: Path) -> dict[str, Any]:
+    """WARN when local-only .taskboard state could be committed by mistake."""
+    path = repo_root / ".gitignore"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    lines = {line.strip() for line in text.splitlines()}
+    if (
+        ".taskboard/notes/" in lines
+        or ".taskboard/" in lines
+        or ".taskboard/*" in lines
+    ):
+        return _check_entry(
+            "gitignore", "OK", ".taskboard/notes/ is ignored by git"
+        )
+    return _check_entry(
+        "gitignore",
+        "WARN",
+        ".taskboard/notes/ is not in .gitignore (atb note stores notes there)",
+        "echo '.taskboard/notes/' >> .gitignore (atb init does this for new repos)",
+    )
+
+
 def _check_adapters() -> list[dict[str, Any]]:
     """One entry per session adapter: OK / INFO (store missing) / WARN (error).
 
@@ -382,6 +406,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
     upstream_item = _check_upstream(cfg, repo_root)
     leftover_item = _check_gc_leftovers(valid_sheets, cfg, repo_root)
     orphan_item = _check_orphan_worktrees(valid_sheets, cfg, repo_root)
+    gitignore_item = _check_gitignore(repo_root)
     adapter_items = _check_adapters()
 
     items = [
@@ -392,6 +417,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
         upstream_item,
         leftover_item,
         orphan_item,
+        gitignore_item,
     ] + adapter_items
     has_fail = any(item["status"] == "FAIL" for item in items)
     has_warn = any(item["status"] == "WARN" for item in items)

@@ -214,6 +214,30 @@ def current_branch(cwd: str | Path | None = None) -> str:
     return proc.stdout.strip()
 
 
+def main_worktree_root(cwd: str | Path | None = None) -> Path:
+    """Return the MAIN worktree's root, from either the main repo or a link.
+
+    Linked worktrees keep their own ``.git`` file but share one common git
+    directory (``git rev-parse --git-common-dir``). Local state that must be
+    visible everywhere — ``.taskboard/notes`` — is stored in the main
+    worktree. Falls back to the first ``git worktree list`` entry when the
+    common directory is not a plain ``.git`` inside the worktree root.
+    """
+    proc = _run(["rev-parse", "--git-common-dir"], cwd=cwd, check=False)
+    raw = proc.stdout.strip()
+    if proc.returncode == 0 and raw:
+        common = Path(raw)
+        if not common.is_absolute():
+            base = Path(cwd) if cwd is not None else Path.cwd()
+            common = (base / common).resolve()
+        if common.name == ".git" and common.parent.is_dir():
+            return common.parent
+    entries = worktree_list(cwd=cwd)
+    if entries and entries[0].get("path"):
+        return Path(entries[0]["path"]).resolve()
+    raise GitError("cannot locate the main worktree")
+
+
 def is_main_worktree(cwd: str | Path | None = None) -> bool:
     """Return whether ``cwd`` is the main worktree (not a linked one)."""
     entries = worktree_list(cwd=cwd)
