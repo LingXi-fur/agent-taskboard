@@ -390,6 +390,13 @@ async function renderDetail(id) {
       ? blockers.map((item) => `[${item.code}] ${item.message}`).join("; ")
       : t("chips.none"),
   ]);
+  const warnings = detail.warnings || [];
+  if (warnings.length) {
+    chips.push([
+      "warnings", "warn",
+      warnings.map((item) => item.message).join("; "),
+    ]);
+  }
 
   const statusHistory = (detail.activity && detail.activity.status_history) || [];
   $("detail").innerHTML = [
@@ -459,9 +466,9 @@ function renderSwimlanes() {
   const heading = $("swimlanes-heading");
   const range = state.eventsRange;
   const days = range && range.days ? range.days : 1;
-  heading.textContent = days > 1 ? t("swimlanes7") : t("swimlanes");
 
   if (!events.length) {
+    heading.textContent = t("swimlanes");
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent = t("lanesEmpty");
@@ -472,6 +479,15 @@ function renderSwimlanes() {
   const start = rangeStart(range);
   const end = rangeEnd(range, start);
   const span = Math.max(1, end.getTime() - start.getTime());
+  const startLabel = start.toLocaleDateString(
+    undefined, { month: "short", day: "numeric" }
+  );
+  const endLabel = new Date(end.getTime() - 86400000).toLocaleDateString(
+    undefined, { month: "short", day: "numeric" }
+  );
+  heading.textContent = days > 1
+    ? t("swimlanes7", { from: startLabel, to: endLabel, days })
+    : t("swimlanes");
 
   const byAgent = new Map();
   for (const event of events) {
@@ -526,7 +542,12 @@ function renderSwimlanes() {
           : t(`eventsShort.${event.kind}`,
               { code: event.exit_code == null ? "?" : event.exit_code });
         segment.textContent = `${labelText} ${localTime(event.timestamp)}`;
+        segment.dataset.icon = statusIcon || (event.kind === "note" ? "✎" : "•");
         segment.title = `${taskId} ${event.title || ""} ${event.text || ""}`;
+        segment.setAttribute(
+          "aria-label",
+          `${taskId} ${labelText} ${localTime(event.timestamp)} ${event.title || ""}`
+        );
         segment.style.left = `${left}%`;
         segment.style.width = `${Math.max(width, 0.6)}%`;
         track.append(segment);
@@ -539,19 +560,35 @@ function renderSwimlanes() {
 
   const scale = document.createElement("div");
   scale.className = "lane-scale";
-  const startLabel = start.toLocaleDateString(
-    undefined, { month: "short", day: "numeric" }
-  );
-  const endLabel = new Date(end.getTime() - 86400000).toLocaleDateString(
-    undefined, { month: "short", day: "numeric" }
-  );
-  scale.textContent = days > 1
-    ? fmt(t("laneRange"), { from: startLabel, to: endLabel, days })
-    : fmt(t("laneScale"), {
-        start: start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        end: end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  if (days > 1) {
+    scale.textContent = fmt(t("laneRange"), {
+      from: startLabel, to: endLabel, days,
+    });
+  } else {
+    // today: the first and the last event of the day, not 00:00—00:00
+    const stamps = events
+      .map((event) => (event.timestamp ? new Date(event.timestamp) : null))
+      .filter((date) => date && !Number.isNaN(date.getTime()))
+      .sort((a, b) => a - b);
+    if (stamps.length) {
+      scale.textContent = fmt(t("laneScale"), {
+        start: stamps[0].toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        end: stamps[stamps.length - 1].toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       });
-  box.append(scale);
+      box.append(scale);
+    }
+    // no events would have returned early, so this is always shown
+  }
+  if (days > 1) box.append(scale);
+
+  // narrow segments: colour + icon only; the full text stays in the
+  // title/aria-label. Measured after the lane is in the document.
+  box.querySelectorAll(".seg").forEach((segment) => {
+    if (segment.offsetWidth < 64) {
+      segment.classList.add("narrow");
+      segment.textContent = segment.dataset.icon || "";
+    }
+  });
 }
 
 /* --------------------------------------------------------------- sessions */
@@ -596,7 +633,7 @@ function renderSessions() {
     return;
   }
   section.hidden = false;
-  const freeLabel = state.lang === "zh" ? "自由会话" : "free session";
+  const quietFree = state.lang === "zh" ? "自由会话" : "free session";
 
   for (const group of sessionGroups()) {
     const block = document.createElement("div");
@@ -626,7 +663,9 @@ function renderSessions() {
       line.innerHTML =
         `<span class="session-adapter">${escapeHTML(row.adapter)}</span>` +
         `<span class="session-state ${stateClass}">${escapeHTML(t(`states.${row.state}`))}</span>` +
-        `<span class="session-task">${escapeHTML(row.task || freeLabel)}</span>` +
+        (row.task
+          ? `<span class="session-task">${escapeHTML(row.task)}</span>`
+          : `<span class="session-task empty" title="${escapeHTML(quietFree)}">—</span>`) +
         `<span class="session-model" title="${escapeHTML(row.model || "")}">${escapeHTML(row.model || "—")}</span>` +
         `<span class="session-time">${escapeHTML(localTime(row.last_active_at))}</span>`;
       block.append(line);

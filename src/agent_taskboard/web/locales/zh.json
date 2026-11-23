@@ -55,7 +55,8 @@
     "diffstat": "diffstat",
     "diffstatValue": "{files} 个文件，+{ins} −{del}",
     "blockers": "blocker",
-    "none": "无"
+    "none": "无",
+    "warnings": "提示"
   },
   "history": "状态历史",
   "acceptance": "验收清单",
@@ -80,12 +81,14 @@
     "status": "{from} → {to}",
     "test": "测试退出码 {code}",
     "rework": "返工",
-    "merge": "已合并"
+    "merge": "已合并",
+    "note": "备注"
   },
   "keyboardHint": "键盘：↑/↓ 选择 · Enter 打开 · Esc 关闭 · c 复制 · t 主题",
   "laneEvents": "{count} 个事件",
   "laneRange": "{from} — {to}（最近 {days} 天）",
   "completedToggle": "已完成（{count}）",
   "currentProject": "当前仓库",
-  "unknownProject": "未记录目录"
+  "unknownProject": "未记录目录",
+  "swimlanes7": "最近 7 天（{from} — {to}）· 按 agent"
 }

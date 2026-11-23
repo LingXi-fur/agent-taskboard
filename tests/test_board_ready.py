@@ -209,7 +209,7 @@ class BoardReadyTests(unittest.TestCase):
             self.assertIn("uncommitted changes:", t2_row_en)
             self.assertIn("last test run did not pass or has no record", t2_row_en)
 
-    def test_cross_task_conflict_consistent_across_status_board_and_review_json(self):
+    def test_cross_task_conflict_is_a_warning_not_a_blocker(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             repo = self._setup(base)
@@ -241,16 +241,30 @@ class BoardReadyTests(unittest.TestCase):
             )
             board_html = board_out.read_text(encoding="utf-8")
 
-            # 3) review --json for each task
+            # 3) overlapping tasks are a warning, never a blocker: neither
+            #    branch conflicts with main, so both stay ready
             for tid in (t1, t2):
                 rev = json.loads(self._atb(repo, "review", tid, "--json", "--lang", "en").stdout)
-                self.assertIs(by_id[tid]["ready"], False)
-                self.assertIs(rev["ready"], False)
-                self.assertEqual([b["code"] for b in by_id[tid]["blockers"]], ["merge_conflict"])
-                self.assertEqual([b["code"] for b in rev["blockers"]], ["merge_conflict"])
-                self.assertIn("✗ merge_conflict", lines[tid])
+                self.assertIs(by_id[tid]["ready"], True)
+                self.assertIs(rev["ready"], True)
+                self.assertEqual(by_id[tid]["blockers"], [])
+                self.assertEqual(rev["blockers"], [])
+                self.assertEqual(
+                    [w["code"] for w in by_id[tid]["warnings"]], ["task_conflict"]
+                )
+                self.assertEqual(
+                    [w["code"] for w in rev["warnings"]], ["task_conflict"]
+                )
+                self.assertIn("✓", lines[tid])
+                self.assertNotIn("✗ merge_conflict", lines[tid])
                 row_html = re.search(rf"<tr[^>]*><td>{tid}</td>.*?</tr>", board_html, re.S).group(0)
-                self.assertIn("✗ merge_conflict", row_html)
+                self.assertIn("✓", row_html)
+                self.assertNotIn("✗ merge_conflict", row_html)
+
+            # review text carries the advisory section
+            text_review = self._atb(repo, "review", t1, "--lang", "en").stdout
+            self.assertIn("## Warnings", text_review)
+            self.assertIn("does not block the merge", text_review)
 
     def test_review_missing_branch_reports_missing_branch_code(self):
         with tempfile.TemporaryDirectory() as tmp:

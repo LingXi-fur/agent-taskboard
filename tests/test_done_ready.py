@@ -251,6 +251,39 @@ class DoneReadyTests(unittest.TestCase):
             self.assertNotEqual(self._head(repo), before)
             self.assertEqual(self._status(repo), "done")
 
+    def test_merge_allows_overlap_with_other_active_task(self):
+        """Two tasks on the same file: neither conflicts with main, so the
+        first merge goes through and the overlap is only a notice."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._in_review(base, repo)  # T001 edits line 3 of src/app.py
+
+            sheet2 = sheet_mod.Sheet(
+                id="T002", title="Other", agent="opencode", status="todo",
+                allow=["src/**"], test="python3 -c 'pass'",
+                body="\n## 背景\n\nx\n",
+            )
+            (repo / ".taskboard" / "tasks" / "T002.md").write_text(
+                sheet_mod.dump(sheet2), encoding="utf-8"
+            )
+            self.assertEqual(self._atb(repo, "start", "T002").returncode, 0)
+            wt2 = base / "wts" / "T002"
+            (wt2 / "src" / "app.py").write_text(
+                "line1\nline2\nT002\n", encoding="utf-8"
+            )
+            self._git(wt2, "add", "-A")
+            self._git(wt2, "commit", "-qm", "t2 work")
+            self._write_run(repo, 0, "T002")
+            self.assertEqual(self._atb(repo, "review", "T002").returncode, 0)
+
+            result = self._atb(repo, "done", "T001", "--merge")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("merged", result.stdout)
+            self.assertIn("T002", result.stderr)
+            self.assertIn("不阻止合并", result.stderr)
+            self.assertEqual(self._status(repo), "done")
+
     def test_ready_task_merges_normally(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

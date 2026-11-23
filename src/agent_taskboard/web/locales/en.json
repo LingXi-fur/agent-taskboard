@@ -55,7 +55,8 @@
     "diffstat": "diffstat",
     "diffstatValue": "{files} file(s), +{ins} −{del}",
     "blockers": "blockers",
-    "none": "none"
+    "none": "none",
+    "warnings": "warnings"
   },
   "history": "Status history",
   "acceptance": "Acceptance checklist",
@@ -80,12 +81,14 @@
     "status": "{from} → {to}",
     "test": "test exit {code}",
     "rework": "rework",
-    "merge": "merged"
+    "merge": "merged",
+    "note": "note"
   },
   "keyboardHint": "keyboard: ↑/↓ select · Enter open · Esc close · c copy · t theme",
   "laneEvents": "{count} event(s)",
   "laneRange": "{from} — {to} (last {days} days)",
   "completedToggle": "Completed ({count})",
   "currentProject": "this repo",
-  "unknownProject": "unknown directory"
+  "unknownProject": "unknown directory",
+  "swimlanes7": "Last 7 days ({from} — {to}) · per agent"
 }

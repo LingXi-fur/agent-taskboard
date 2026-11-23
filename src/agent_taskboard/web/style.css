@@ -329,6 +329,7 @@ tr.group-toggle:hover td { color: var(--accent); }
 .session-state.state-waiting { color: var(--seg-review); }
 .session-state.state-idle { color: var(--muted); }
 .session-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-task.empty { color: var(--muted); }
 .session-model {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--muted); font-variant-numeric: tabular-nums;
