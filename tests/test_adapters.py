@@ -127,8 +127,11 @@ class ClaudeCodeAdapterTests(unittest.TestCase):
         self.assertEqual(first.branch, "opencode/demo-task")
         self.assertEqual(first.model, "claude-opus-5-5")
         self.assertEqual(
-            first.usage,
-            {"input": 1200, "output": 340, "cache_read": 8000, "cache_write": 1500},
+            first.resolved_usage(),
+            {
+                "input": 1200, "output": 340, "cache_read": 8000,
+                "cache_write": 1500, "total": 11040,
+            },
         )
         self.assertEqual(first.state, "working")  # user turn without a reply
         self.assertEqual(
@@ -219,7 +222,10 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(session.last_message, "One more pass on the naming please")
         self.assertEqual(
             session.usage,
-            {"input": 900, "output": 250, "cache_read": 3000, "cache_write": 100},
+            {
+                "input": 900, "output": 250, "cache_read": 3000,
+                "cache_write": 100, "total": 4250,
+            },
         )
         self.assertEqual(session.extra["originator"], "codex-cli")
 
@@ -270,7 +276,8 @@ class GeminiCliAdapterTests(unittest.TestCase):
         self.assertEqual(session.state, "working")
         self.assertEqual(session.last_message, "Draft the fix next please")
         self.assertEqual(
-            session.usage, {"input": 700, "output": 120, "cache_read": 2100}
+            session.usage,
+            {"input": 700, "output": 120, "cache_read": 2100, "total": 2970},
         )
 
     def test_env_override(self):
@@ -307,7 +314,10 @@ class OpenCodeAdapterTests(unittest.TestCase):
             self.assertEqual(session.last_message, "Skeleton in place.")
             self.assertEqual(
                 session.usage,
-                {"input": 11223, "output": 2537, "cache_read": 99000, "cache_write": 4000},
+                {
+                    "input": 11223, "output": 2537, "cache_read": 99000,
+                    "cache_write": 4000, "total": 116760,
+                },
             )
 
     def test_corrupt_database_raises_adapter_error(self):

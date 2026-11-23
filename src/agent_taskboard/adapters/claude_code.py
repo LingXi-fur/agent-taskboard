@@ -4,25 +4,33 @@ Each session is one JSONL file: ``<uuid>.jsonl`` under a directory named
 after the munged working directory. Lines carry ``timestamp``, ``cwd`` and
 ``gitBranch``; assistant lines add ``message.model`` and ``message.usage``.
 Files grow very large (hundreds of MB), so only the first 4 KB (session
-start) and the last 64 KB (everything else) are read. Override the root with
-``ATB_CLAUDE_HOME``.
+start) and the last 64 KB (everything else) are read for the metadata.
+Token usage is summed in a separate bounded streaming pass (64 MiB per
+file, line by line, never loaded whole); streaming writes the same
+``message.id``/``requestId`` several times, so usage is de-duplicated by
+that pair. Override the root with ``ATB_CLAUDE_HOME``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
 from .base import (
+    USAGE_SCAN_LIMIT,
     AdapterError,
     Session,
+    add_usage,
     classify_state,
+    finish_usage,
     home,
     json_lines,
     parse_iso,
     pretty_model,
+    usage_bucket,
     read_head,
     read_tail,
     summarize,
@@ -65,6 +73,56 @@ class ClaudeCodeAdapter:
             if session is not None:
                 yield session
 
+    def _usage_from_file(self, path: Path) -> dict[str, int] | None:
+        """Sum assistant ``message.usage`` across the session, streamed.
+
+        Only the first USAGE_SCAN_LIMIT bytes are read (bounded memory and
+        time for multi-hundred-MB transcripts). Streaming writes the same
+        message repeatedly; the (message.id, requestId) pair de-duplicates
+        them so a single response is counted once.
+        """
+        totals, present = usage_bucket()
+        seen: set[tuple[str, str]] = set()
+        budget = USAGE_SCAN_LIMIT
+        try:
+            with path.open("rb") as handle:
+                for raw in handle:
+                    budget -= len(raw)
+                    if budget < 0:
+                        break
+                    if b'"usage"' not in raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    message = obj.get("message")
+                    if not isinstance(message, dict):
+                        continue
+                    raw_usage = message.get("usage")
+                    if not isinstance(raw_usage, dict):
+                        continue
+                    identity = (
+                        str(message.get("id") or ""),
+                        str(obj.get("requestId") or ""),
+                    )
+                    if identity != ("", "") and identity in seen:
+                        continue
+                    seen.add(identity)
+                    add_usage(totals, present, "input", raw_usage.get("input_tokens"))
+                    add_usage(totals, present, "output", raw_usage.get("output_tokens"))
+                    add_usage(
+                        totals, present, "cache_read",
+                        raw_usage.get("cache_read_input_tokens"),
+                    )
+                    add_usage(
+                        totals, present, "cache_write",
+                        raw_usage.get("cache_creation_input_tokens"),
+                    )
+        except OSError:
+            return None
+        return finish_usage(totals, present)
+
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
     ) -> Session | None:
@@ -84,7 +142,6 @@ class ClaudeCodeAdapter:
         cwd = ""
         branch = ""
         model = ""
-        usage: dict[str, int] | None = None
         last_active: datetime | None = None
         last_text = ""
         pending_user_turn = False
@@ -103,16 +160,6 @@ class ClaudeCodeAdapter:
                 continue
             if message.get("model"):
                 model = pretty_model(str(message["model"]))
-            raw_usage = message.get("usage")
-            if isinstance(raw_usage, dict):
-                usage = {
-                    "input": int(raw_usage.get("input_tokens") or 0),
-                    "output": int(raw_usage.get("output_tokens") or 0),
-                    "cache_read": int(raw_usage.get("cache_read_input_tokens") or 0),
-                    "cache_write": int(
-                        raw_usage.get("cache_creation_input_tokens") or 0
-                    ),
-                }
             text = summarize(text_from_content(message.get("content")))
             if not text:
                 continue
@@ -139,5 +186,6 @@ class ClaudeCodeAdapter:
             ),
             model=model,
             last_message=last_text,
-            usage=usage,
+            usage=None,
+            usage_loader=lambda path=path: self._usage_from_file(path),
         )

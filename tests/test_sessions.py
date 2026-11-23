@@ -199,7 +199,10 @@ class SessionsTests(unittest.TestCase):
             )
             self.assertEqual(
                 mapped["usage"],
-                {"input": 1200, "output": 340, "cache_read": 8000, "cache_write": 1500},
+                {
+                    "input": 1200, "output": 340, "cache_read": 8000,
+                    "cache_write": 1500, "total": 11040,
+                },
             )
 
     def test_sessions_redact_hides_summaries(self):

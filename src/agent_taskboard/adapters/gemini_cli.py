@@ -5,8 +5,10 @@ Each scratch directory under ``~/.gemini/tmp`` holds a ``.project_root`` file
 single JSON object: ``sessionId``, ``startTime``, ``lastUpdated`` and
 ``messages``; assistant messages carry ``model`` and a ``tokens`` object.
 The files are plain JSON (a few MB at most), so they are parsed whole with a
-32 MiB guard — they cannot be tail-parsed safely. Override the root with
-``ATB_GEMINI_HOME``.
+32 MiB guard — they cannot be tail-parsed safely. Token usage sums the
+``tokens`` object of every assistant message (``input``/``output``/
+``cached``); Gemini records no cache-write counter, so that key is absent.
+Override the root with ``ATB_GEMINI_HOME``.
 """
 
 from __future__ import annotations
@@ -20,10 +22,13 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    add_usage,
     classify_state,
+    finish_usage,
     home,
     parse_iso,
     pretty_model,
+    usage_bucket,
     summarize,
     utcnow,
 )
@@ -96,29 +101,38 @@ class GeminiCliAdapter:
             return None
 
         model = ""
-        usage: dict[str, int] | None = None
         last_text = ""
         last_role = ""
         for message in reversed(messages):
             if not isinstance(message, dict):
                 continue
             kind = message.get("type")
-            tokens = message.get("tokens")
             if not model and message.get("model"):
                 model = pretty_model(str(message["model"]))
-            if usage is None and isinstance(tokens, dict):
-                usage = {
-                    "input": int(tokens.get("input") or 0),
-                    "output": int(tokens.get("output") or 0),
-                    "cache_read": int(tokens.get("cached") or 0),
-                }
             if not last_role and kind in ("user", "gemini"):
                 last_role = str(kind)
                 text = summarize(str(message.get("content") or ""))
                 if text:
                     last_text = text
-            if model and usage and last_role:
-                break  # newest message, model and usage are all in hand
+            if model and last_role:
+                break  # newest message and model are all in hand
+
+        # token usage: sum every message's tokens (the chat file is parsed
+        # whole, so no streaming needed); cached -> cache_read, no cache_write
+        totals, present = usage_bucket()
+        usage_total: int | None = None
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            tokens = message.get("tokens")
+            if not isinstance(tokens, dict):
+                continue
+            add_usage(totals, present, "input", tokens.get("input"))
+            add_usage(totals, present, "output", tokens.get("output"))
+            add_usage(totals, present, "cache_read", tokens.get("cached"))
+            if tokens.get("total") is not None:
+                usage_total = (usage_total or 0) + int(tokens["total"])
+        usage = finish_usage(totals, present, usage_total)
 
         if last_role == "user":
             # a user turn without an assistant reply: the run is in flight

@@ -5,7 +5,10 @@ The SQLite database is opened with ``file:...?mode=ro`` (plus
 OpenCode keeps working: SQLite readers and the writer coexist through the
 WAL. The columns used are ``session_v2`` (directory, model, tokens, busy and
 idle timestamps) and the newest ``session_message`` row per session for the
-last text. Override the data directory with ``ATB_OPENCODE_HOME``.
+last text. Token usage comes from the session row's cumulative counter
+columns (``tokens_input``/``tokens_output``/``tokens_cache_read``/
+``tokens_cache_write``); absent columns are omitted rather than zeroed.
+Override the data directory with ``ATB_OPENCODE_HOME``.
 """
 
 from __future__ import annotations
@@ -20,9 +23,12 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    add_usage,
     classify_state,
     epoch_ms,
+    finish_usage,
     home,
+    usage_bucket,
     pretty_model,
     summarize,
     text_from_content,
@@ -178,19 +184,13 @@ class OpenCodeAdapter:
         busy: bool | None = None
         if time_busy is not None and time_idle is not None:
             busy = int(time_busy) > int(time_idle)
-        usage = None
-        if any(
-            value is not None
-            for value in (
-                tokens_input, tokens_output, tokens_cache_read, tokens_cache_write
-            )
-        ):
-            usage = {
-                "input": int(tokens_input or 0),
-                "output": int(tokens_output or 0),
-                "cache_read": int(tokens_cache_read or 0),
-                "cache_write": int(tokens_cache_write or 0),
-            }
+        # the session row carries cumulative token counters
+        totals, present = usage_bucket()
+        add_usage(totals, present, "input", tokens_input)
+        add_usage(totals, present, "output", tokens_output)
+        add_usage(totals, present, "cache_read", tokens_cache_read)
+        add_usage(totals, present, "cache_write", tokens_cache_write)
+        usage = finish_usage(totals, present)
 
         session = Session(
             adapter=NAME,

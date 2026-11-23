@@ -77,6 +77,14 @@ function escapeHTML(text) {
 }
 
 /** Middle-truncate a path, keeping the directory name visible. */
+function fmtTokens(value) {
+  if (value == null) return "—";
+  const total = Number(value);
+  if (total >= 1000000) return `${(total / 1000000).toFixed(1)}M`;
+  if (total >= 1000) return `${Math.round(total / 1000)}k`;
+  return String(total);
+}
+
 function displayCwd(cwd) {
   if (!cwd) return "";
   const parts = cwd.split(/[\\/]+/).filter(Boolean);
@@ -390,6 +398,19 @@ async function renderDetail(id) {
       ? blockers.map((item) => `[${item.code}] ${item.message}`).join("; ")
       : t("chips.none"),
   ]);
+  const usage = detail.usage || {};
+  if (usage.sessions) {
+    const parts = [];
+    if (usage.total != null) parts.push(`total ${fmtTokens(usage.total)}`);
+    for (const key of ["input", "output", "cache_read", "cache_write"]) {
+      if (usage[key] != null) parts.push(`${key} ${fmtTokens(usage[key])}`);
+    }
+    parts.push(fmt(t("chips.usageSessions"), { count: usage.sessions }));
+    if (usage.missing) {
+      parts.push(fmt(t("chips.usageMissing"), { count: usage.missing }));
+    }
+    chips.push(["usage", "", parts.join(" · ")]);
+  }
   const warnings = detail.warnings || [];
   if (warnings.length) {
     chips.push([

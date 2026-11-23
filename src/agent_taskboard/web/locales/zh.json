@@ -56,7 +56,10 @@
     "diffstatValue": "{files} 个文件，+{ins} −{del}",
     "blockers": "blocker",
     "none": "无",
-    "warnings": "提示"
+    "warnings": "提示",
+    "usage": "token 用量",
+    "usageSessions": "{count} 个会话",
+    "usageMissing": "{count} 个没有数据"
   },
   "history": "状态历史",
   "acceptance": "验收清单",

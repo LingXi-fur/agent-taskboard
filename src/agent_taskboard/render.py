@@ -127,6 +127,38 @@ def _notes_lines(info: dict, zh: bool) -> list[str]:
     return out
 
 
+def _usage_lines(info: dict, zh: bool) -> list[str]:
+    """Render the per-task token usage block (tokens only, never money)."""
+    usage = info.get("usage") or {}
+    sessions = int(usage.get("sessions") or 0)
+    if sessions == 0:
+        return [
+            "（没有找到与该任务对应的会话）" if zh
+            else "(no sessions mapped to this task)"
+        ]
+    lines = [
+        (
+            f"- 会话：{sessions} 个（有用量数据 {usage.get('with_usage', 0)} 个，"
+            f"没有 {usage.get('missing', 0)} 个）"
+            if zh else
+            f"- sessions: {sessions} ({usage.get('with_usage', 0)} with usage, "
+            f"{usage.get('missing', 0)} without)"
+        )
+    ]
+    parts = [
+        f"{key}: {int(usage[key]):,}"
+        for key in ("input", "output", "cache_read", "cache_write")
+        if key in usage
+    ]
+    if parts:
+        lines.append("- " + " · ".join(parts))
+    if "total" in usage:
+        lines.append(f"- total: {int(usage['total']):,}")
+    elif not parts:
+        lines.append("- （没有可用的 token 数据）" if zh else "- (no token data available)")
+    return lines
+
+
 def _render_review_zh(info: dict) -> str:
     lines: list[str] = []
     lines.append(f"# 审查：{info['id']} {info['title']}")
@@ -152,6 +184,10 @@ def _render_review_zh(info: dict) -> str:
     lines.append("## 最近一次测试")
     lines.append("")
     lines.append(f"- {_TEST_ZH.get(info['test'], '— 无记录')}")
+    lines.append("")
+    lines.append("## Token 用量")
+    lines.append("")
+    lines.extend(_usage_lines(info, zh=True))
     lines.append("")
     lines.extend(_activity_history_lines(info, zh=True))
     lines.append("")
@@ -212,6 +248,10 @@ def _render_review_en(info: dict) -> str:
     lines.append("## Last test run")
     lines.append("")
     lines.append(f"- {_TEST_EN.get(info['test'], '— no record')}")
+    lines.append("")
+    lines.append("## Token usage")
+    lines.append("")
+    lines.extend(_usage_lines(info, zh=False))
     lines.append("")
     lines.extend(_activity_history_lines(info, zh=False))
     lines.append("")
@@ -468,6 +508,7 @@ def build_review_json(info: dict, *, lang: str = "zh") -> dict:
         "drift": list(info["drift"]),
         "acceptance": parse_acceptance_items(info.get("acceptance") or ""),
         "notes": list(info.get("notes") or []),
+        "usage": dict(info.get("usage") or {}),
         "ready": ready,
         "blockers": blockers,
         "warnings": warnings,

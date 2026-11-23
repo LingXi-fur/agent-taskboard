@@ -38,6 +38,48 @@ HEAD_BYTES = 4 * 1024
 #: Truncation limit for the last-message summary.
 SUMMARY_LIMIT = 120
 
+#: Token-usage keys shared by every adapter. Adapters only include keys the
+#: store actually records — never zeros for missing data.
+USAGE_KEYS = ("input", "output", "cache_read", "cache_write", "total")
+
+#: Per-file byte budget for token-usage scanning. Usage totals are
+#: accumulated by streaming the store (bounded memory); beyond this budget
+#: the scan stops, so a monstrous transcript cannot slow review down.
+USAGE_SCAN_LIMIT = 64 * 1024 * 1024
+
+
+def usage_bucket() -> tuple[dict[str, int], set[str]]:
+    """Return ``(totals, present_keys)`` for accumulating usage."""
+    return {}, set()
+
+
+def add_usage(
+    totals: dict[str, int], present: set[str], key: str, value: object
+) -> None:
+    """Accumulate one source value; ``None`` means "not recorded"."""
+    if value is None:
+        return
+    totals[key] = totals.get(key, 0) + int(value)
+    present.add(key)
+
+
+def finish_usage(
+    totals: dict[str, int], present: set[str], total: int | None = None
+) -> dict[str, int] | None:
+    """Build the public usage dict: only recorded keys, plus ``total``."""
+    if total is None and not present:
+        return None
+    result = {
+        key: totals[key]
+        for key in ("input", "output", "cache_read", "cache_write")
+        if key in present
+    }
+    if total is not None:
+        result["total"] = int(total)
+    elif result:
+        result["total"] = sum(result.values())
+    return result
+
 
 class AdapterError(Exception):
     """Raised when an adapter's store cannot be read or understood."""
@@ -57,7 +99,19 @@ class Session:
     model: str = ""
     last_message: str = ""
     usage: dict[str, int] | None = None
+    #: Optional lazy usage reader (e.g. claude-code streams a big file only
+    #: when somebody actually asks for the tokens); excluded from compare.
+    usage_loader: Any = field(default=None, repr=False, compare=False)
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def resolved_usage(self) -> dict[str, int] | None:
+        """Return usage, running the lazy loader at most once."""
+        if self.usage is None and self.usage_loader is not None:
+            try:
+                self.usage = self.usage_loader()
+            except OSError:
+                self.usage = None
+        return self.usage
 
 
 class Adapter(Protocol):
