@@ -24,8 +24,13 @@
   "sessionsError": "adapter {name}：报错",
   "taskList": "任务",
   "taskColumns": {
-    "id": "ID", "status": "状态", "agent": "agent", "title": "标题",
-    "branch": "分支", "aheadBehind": "领先/落后", "ready": "READY"
+    "id": "ID",
+    "status": "状态",
+    "agent": "agent",
+    "title": "标题",
+    "branch": "分支",
+    "aheadBehind": "领先/落后",
+    "ready": "READY"
   },
   "detail": "任务详情",
   "close": "关闭",
@@ -63,7 +68,12 @@
     "idle": "○ 空闲",
     "unknown": "? 未知"
   },
-  "theme": { "auto": "主题：自动", "light": "主题：亮色", "dark": "主题：暗色", "contrast": "主题：高对比" },
+  "theme": {
+    "auto": "主题：自动",
+    "light": "主题：亮色",
+    "dark": "主题：暗色",
+    "contrast": "主题：高对比"
+  },
   "language": "EN / 中文",
   "statusLine": "{tasks} 个任务 · 更新于 {time}",
   "eventsShort": {
@@ -72,5 +82,10 @@
     "rework": "返工",
     "merge": "已合并"
   },
-  "keyboardHint": "键盘：↑/↓ 选择 · Enter 打开 · Esc 关闭 · c 复制 · t 主题"
+  "keyboardHint": "键盘：↑/↓ 选择 · Enter 打开 · Esc 关闭 · c 复制 · t 主题",
+  "laneEvents": "{count} 个事件",
+  "laneRange": "{from} — {to}（最近 {days} 天）",
+  "completedToggle": "已完成（{count}）",
+  "currentProject": "当前仓库",
+  "unknownProject": "未记录目录"
 }

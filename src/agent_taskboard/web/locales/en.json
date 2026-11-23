@@ -24,8 +24,13 @@
   "sessionsError": "adapter {name}: error",
   "taskList": "Tasks",
   "taskColumns": {
-    "id": "ID", "status": "status", "agent": "agent", "title": "title",
-    "branch": "branch", "aheadBehind": "ahead/behind", "ready": "ready"
+    "id": "ID",
+    "status": "status",
+    "agent": "agent",
+    "title": "title",
+    "branch": "branch",
+    "aheadBehind": "ahead/behind",
+    "ready": "ready"
   },
   "detail": "Task detail",
   "close": "close",
@@ -63,7 +68,12 @@
     "idle": "○ idle",
     "unknown": "? unknown"
   },
-  "theme": { "auto": "theme: auto", "light": "theme: light", "dark": "theme: dark", "contrast": "theme: contrast" },
+  "theme": {
+    "auto": "theme: auto",
+    "light": "theme: light",
+    "dark": "theme: dark",
+    "contrast": "theme: contrast"
+  },
   "language": "中文 / EN",
   "statusLine": "{tasks} task(s) · refreshed {time}",
   "eventsShort": {
@@ -72,5 +82,10 @@
     "rework": "rework",
     "merge": "merged"
   },
-  "keyboardHint": "keyboard: ↑/↓ select · Enter open · Esc close · c copy · t theme"
+  "keyboardHint": "keyboard: ↑/↓ select · Enter open · Esc close · c copy · t theme",
+  "laneEvents": "{count} event(s)",
+  "laneRange": "{from} — {to} (last {days} days)",
+  "completedToggle": "Completed ({count})",
+  "currentProject": "this repo",
+  "unknownProject": "unknown directory"
 }

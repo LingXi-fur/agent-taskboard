@@ -7,8 +7,11 @@ const state = {
   tasks: [],
   overview: null,
   sessions: null,
+  events: [],
+  eventsRange: null,
   selected: null,
   detail: null,
+  showCompleted: false,
   themes: ["auto", "light", "dark", "contrast"],
 };
 
@@ -46,12 +49,18 @@ const STATUS_ICON = {
 };
 
 function statusBadge(status) {
-  const label = t(`summary.${status}`);
-  const icon = STATUS_ICON[status] || "•";
   const span = document.createElement("span");
   span.className = `badge ${status}`;
-  span.textContent = `${icon} ${label}`;
+  span.innerHTML =
+    `<span class="badge-icon" aria-hidden="true">${STATUS_ICON[status] || "•"}</span>` +
+    `<span class="badge-text">${escapeHTML(t(`summary.${status}`))}</span>`;
   return span;
+}
+
+function localDate() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 function localTime(iso) {
@@ -67,7 +76,29 @@ function escapeHTML(text) {
   })[ch]);
 }
 
+/** Middle-truncate a path, keeping the directory name visible. */
+function displayCwd(cwd) {
+  if (!cwd) return "";
+  const parts = cwd.split(/[\\/]+/).filter(Boolean);
+  const base = parts[parts.length - 1] || cwd;
+  if (cwd.length <= 42) return cwd;
+  const head = parts.length > 1 ? parts[0] : "";
+  return head ? `${head}/…/${base}` : `…/${base}`;
+}
+
 /* ------------------------------------------------------------------ boot */
+
+function applyUrlOverrides() {
+  const params = new URLSearchParams(location.search);
+  const theme = params.get("theme");
+  if (["auto", "light", "dark", "contrast"].includes(theme)) {
+    localStorage.setItem("atb-theme", theme);
+  }
+  const lang = params.get("lang");
+  if (["zh", "en"].includes(lang)) {
+    localStorage.setItem("atb-lang", lang);
+  }
+}
 
 function detectLanguage() {
   const saved = localStorage.getItem("atb-lang");
@@ -91,36 +122,43 @@ async function loadTexts() {
 
 function applyTheme() {
   const theme = localStorage.getItem("atb-theme") || "auto";
-  document.body.dataset.theme = theme;
+  document.documentElement.dataset.theme = theme;
   renderThemeLabel();
 }
 
 function renderThemeLabel() {
-  const theme = document.body.dataset.theme || "auto";
+  const theme = document.documentElement.dataset.theme || "auto";
   const button = $("theme-toggle");
   if (button) button.textContent = t(`theme.${theme}`);
 }
 
 function cycleTheme() {
-  const current = document.body.dataset.theme || "auto";
+  const current = document.documentElement.dataset.theme || "auto";
   const next = state.themes[(state.themes.indexOf(current) + 1) % state.themes.length];
   localStorage.setItem("atb-theme", next);
-  document.body.dataset.theme = next;
+  document.documentElement.dataset.theme = next;
   renderThemeLabel();
 }
 
 async function fetchAll() {
-  const day = new Date().toISOString().slice(0, 10);
-  const [overview, tasks, events, sessions] = await Promise.all([
+  const [overview, tasks, sessions] = await Promise.all([
     fetchJSON("/api/v1/overview"),
     fetchJSON("/api/v1/tasks"),
-    fetchJSON(`/api/v1/events?day=${day}`),
     fetchJSON("/api/v1/sessions"),
   ]);
   state.overview = overview;
   state.tasks = tasks.tasks;
-  state.events = events.events;
   state.sessions = sessions;
+
+  // today first (the swimlanes are "what happened today"); when nothing
+  // happened today, fall back to the last seven days and label the range
+  let events = await fetchJSON(`/api/v1/events?day=${localDate()}`);
+  if (!events.events.length) {
+    events = await fetchJSON("/api/v1/events?days=7");
+  }
+  state.events = events.events;
+  state.eventsRange = events.range || null;
+
   renderAll();
   if (state.detail) renderDetail(state.detail.id); // refresh the open panel
 }
@@ -157,13 +195,9 @@ function renderSummary() {
   for (const [key, value] of metrics) {
     const metric = document.createElement("div");
     metric.className = "metric";
-    const num = document.createElement("div");
-    num.className = "num";
-    num.textContent = String(value);
-    const label = document.createElement("div");
-    label.className = "lbl";
-    label.textContent = t(`summary.${key}`);
-    metric.append(num, label);
+    metric.innerHTML =
+      `<div class="num">${escapeHTML(String(value))}</div>` +
+      `<div class="lbl">${escapeHTML(t(`summary.${key}`))}</div>`;
     box.append(metric);
   }
 
@@ -200,6 +234,49 @@ function readyCell(row) {
   return span;
 }
 
+const STATUS_RANK = { review: 0, doing: 1, rework: 1, todo: 2, done: 3, dropped: 4 };
+
+function taskRow(row) {
+  const tr = document.createElement("tr");
+  tr.tabIndex = 0;
+  tr.dataset.id = row.id;
+  if (state.selected === row.id) tr.classList.add("selected");
+
+  const idCell = document.createElement("td");
+  idCell.textContent = row.id;
+  tr.append(idCell);
+
+  const statusCell = document.createElement("td");
+  statusCell.className = "status-cell";
+  statusCell.append(statusBadge(row.status));
+  tr.append(statusCell);
+
+  const values = [
+    row.agent || "—",
+    row.title,
+    row.missing ? "—" : (row.branch || "—"),
+    row.ahead == null ? "—" : `+${row.ahead}/-${row.behind}`,
+  ];
+  for (const value of values) {
+    const td = document.createElement("td");
+    td.textContent = String(value);
+    tr.append(td);
+  }
+
+  const ready = document.createElement("td");
+  ready.append(readyCell(row));
+  tr.append(ready);
+
+  tr.addEventListener("click", () => selectTask(row.id));
+  tr.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectTask(row.id);
+    }
+  });
+  return tr;
+}
+
 function renderTaskList() {
   const headers = ["id", "status", "agent", "title", "branch", "aheadBehind", "ready"];
   const headRow = $("task-headers");
@@ -212,47 +289,46 @@ function renderTaskList() {
 
   const body = $("task-rows");
   body.textContent = "";
-  for (const row of state.tasks) {
-    const tr = document.createElement("tr");
-    tr.tabIndex = 0;
-    tr.dataset.id = row.id;
-    if (state.selected === row.id) tr.classList.add("selected");
 
-    const cells = [
-      row.id,
-      null, // badge below
-      row.agent || "—",
-      row.title,
-      row.missing ? "—" : (row.branch || "—"),
-      row.ahead == null ? "—" : `+${row.ahead}/-${row.behind}`,
-      null, // ready cell
-    ];
-    cells.forEach((value, index) => {
-      const td = document.createElement("td");
-      if (index === 1) {
-        td.append(statusBadge(row.status));
-      } else if (index === 6) {
-        td.append(readyCell(row));
-      } else {
-        td.textContent = String(value);
-      }
-      tr.append(td);
-    });
+  const unfinished = state.tasks
+    .filter((row) => !["done", "dropped"].includes(row.status))
+    .sort((a, b) =>
+      (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) ||
+      String(a.id).localeCompare(String(b.id)));
+  const finished = state.tasks
+    .filter((row) => ["done", "dropped"].includes(row.status))
+    .sort((a, b) => String(b.id).localeCompare(String(a.id)));
 
-    tr.addEventListener("click", () => selectTask(row.id));
-    tr.addEventListener("keydown", (event) => {
+  for (const row of unfinished) body.append(taskRow(row));
+
+  if (finished.length) {
+    const toggle = document.createElement("tr");
+    toggle.className = "group-toggle";
+    toggle.tabIndex = 0;
+    const cell = document.createElement("td");
+    cell.colSpan = headers.length;
+    cell.textContent =
+      (state.showCompleted ? "▾ " : "▸ ") +
+      fmt(t("completedToggle"), { count: finished.length });
+    toggle.append(cell);
+    const flip = () => { state.showCompleted = !state.showCompleted; renderTaskList(); };
+    toggle.addEventListener("click", flip);
+    toggle.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectTask(row.id);
+        flip();
       }
     });
-    body.append(tr);
+    body.append(toggle);
+    if (state.showCompleted) {
+      for (const row of finished) body.append(taskRow(row));
+    }
   }
 }
 
 function selectTask(id) {
   state.selected = id;
-  document.querySelectorAll("#task-rows tr").forEach((tr) => {
+  document.querySelectorAll("#task-rows tr[data-id]").forEach((tr) => {
     tr.classList.toggle("selected", tr.dataset.id === id);
   });
   renderDetail(id);
@@ -260,29 +336,22 @@ function selectTask(id) {
 
 async function renderDetail(id) {
   try {
-    const detail = await fetchJSON(`/api/v1/tasks/${encodeURIComponent(id)}`);
-    state.detail = detail;
+    state.detail = await fetchJSON(`/api/v1/tasks/${encodeURIComponent(id)}`);
   } catch (error) {
     showError(error);
     return;
   }
   const detail = state.detail;
-  const section = $("detail-sec");
-  section.hidden = false;
+  $("detail-sec").hidden = false;
   $("detail-heading").textContent = `${detail.id} ${detail.title}`;
 
   const chips = [];
-  const scopeBad = (detail.scope && (detail.scope.denied.length || detail.scope.outside.length));
+  const scope = detail.scope || { denied: [], outside: [], uncommitted: [] };
+  const scopeCount = scope.denied.length + scope.outside.length;
   chips.push([
-    "scope",
-    scopeBad ? "bad" : "ok",
-    scopeBad
-      ? fmt(t("chips.scopeBad"), {
-          count: detail.scope.denied.length + detail.scope.outside.length,
-        })
-      : t("chips.scopeOk"),
+    "scope", scopeCount ? "bad" : "ok",
+    scopeCount ? fmt(t("chips.scopeBad"), { count: scopeCount }) : t("chips.scopeOk"),
   ]);
-  const uncommitted = (detail.scope && detail.scope.uncommitted) || [];
   const test = detail.test || {};
   if (test.result === "ok") {
     chips.push(["test", "ok", t("chips.testOk")]);
@@ -295,13 +364,12 @@ async function renderDetail(id) {
     (item) => item.code === "merge_conflict"
   );
   chips.push([
-    "conflict",
-    mergeBad ? "bad" : "ok",
+    "conflict", mergeBad ? "bad" : "ok",
     mergeBad ? t("chips.conflictBad") : t("chips.conflictOk"),
   ]);
+  const uncommitted = scope.uncommitted || [];
   chips.push([
-    "dirty",
-    uncommitted.length ? "bad" : "ok",
+    "dirty", uncommitted.length ? "bad" : "ok",
     uncommitted.length
       ? fmt(t("chips.dirtyBad"), { count: uncommitted.length })
       : t("chips.dirtyOk"),
@@ -317,15 +385,14 @@ async function renderDetail(id) {
   }
   const blockers = detail.blockers || [];
   chips.push([
-    "blockers",
-    blockers.length ? "bad" : "ok",
+    "blockers", blockers.length ? "bad" : "ok",
     blockers.length
       ? blockers.map((item) => `[${item.code}] ${item.message}`).join("; ")
       : t("chips.none"),
   ]);
 
   const statusHistory = (detail.activity && detail.activity.status_history) || [];
-  const rowsHTML = [
+  $("detail").innerHTML = [
     `<div class="chips">` + chips.map(([key, cls, text]) =>
       `<span class="chip ${cls}"><b>${escapeHTML(t(`chips.${key}`))}</b>${escapeHTML(text)}</span>`
     ).join("") + `</div>`,
@@ -335,15 +402,14 @@ async function renderDetail(id) {
     ).join("") + `</ul>`,
     `<h3>${escapeHTML(t("acceptance"))}</h3>`,
     `<ul class="acceptance">` +
-      (detail.acceptance || [])
-        .map((item) => `<li><span class="box">${item.checked ? "☑" : "☐"}</span>${escapeHTML(item.text)}</li>`)
+      (detail.acceptance || []).map((item) =>
+        `<li><span class="box">${item.checked ? "☑" : "☐"}</span>${escapeHTML(item.text)}</li>`)
         .join("") +
       `</ul>`,
     `<div class="copy-row"><button id="copy-handoff" type="button">${escapeHTML(t("copyHandoff"))}</button> ` +
-      `<span id="copy-result"></span></div>`,
+      `<span id="copy-result" class="muted"></span></div>`,
   ].join("");
 
-  $("detail").innerHTML = rowsHTML;
   $("copy-handoff").addEventListener("click", copyHandoff);
 }
 
@@ -369,22 +435,43 @@ function closeDetail() {
 
 /* -------------------------------------------------------------- swimlanes */
 
+function rangeStart(range) {
+  if (range && range.from) {
+    const [year, month, day] = range.from.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function rangeEnd(range, start) {
+  if (range && range.to) {
+    const [year, month, day] = range.to.split("-").map(Number);
+    return new Date(year, month - 1, day + 1);
+  }
+  return new Date(start.getTime() + 86400000);
+}
+
 function renderSwimlanes() {
   const box = $("swimlanes");
   box.textContent = "";
   const events = state.events || [];
+  const heading = $("swimlanes-heading");
+  const range = state.eventsRange;
+  const days = range && range.days ? range.days : 1;
+  heading.textContent = days > 1 ? t("swimlanes7") : t("swimlanes");
+
   if (!events.length) {
     const empty = document.createElement("p");
-    empty.className = "lane-sub";
+    empty.className = "muted";
     empty.textContent = t("lanesEmpty");
     box.append(empty);
     return;
   }
 
-  const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayEnd = new Date(midnight.getTime() + 86400000);
-  const span = 86400000;
+  const start = rangeStart(range);
+  const end = rangeEnd(range, start);
+  const span = Math.max(1, end.getTime() - start.getTime());
 
   const byAgent = new Map();
   for (const event of events) {
@@ -396,19 +483,14 @@ function renderSwimlanes() {
 
   for (const [agent, agentEvents] of [...byAgent.entries()].sort()) {
     const lane = document.createElement("div");
-    lane.className = "lane";
+    lane.className = "lane card-inner";
     const head = document.createElement("div");
     head.className = "lane-head";
-    const name = document.createElement("span");
-    name.className = "lane-agent";
-    name.textContent = agent;
-    const sub = document.createElement("span");
-    sub.className = "lane-sub";
-    sub.textContent = `${agentEvents.length} event(s)`;
-    head.append(name, sub);
+    head.innerHTML =
+      `<span class="lane-agent">${escapeHTML(agent)}</span>` +
+      `<span class="muted">${fmt(t("laneEvents"), { count: agentEvents.length })}</span>`;
     lane.append(head);
 
-    // one mini track per task: overlapping tasks never collide
     const byTask = new Map();
     for (const event of agentEvents) {
       if (!byTask.has(event.task)) byTask.set(event.task, []);
@@ -416,53 +498,98 @@ function renderSwimlanes() {
     }
     for (const [taskId, taskEvents] of byTask) {
       taskEvents.sort((a, b) => a.ts - b.ts);
+      const row = document.createElement("div");
+      row.className = "lane-row";
+      const label = document.createElement("span");
+      label.className = "lane-task";
+      label.textContent = taskId;
+      label.title = taskEvents[0].title || "";
       const track = document.createElement("div");
       track.className = "lane-track";
-      track.title = `${taskId} ${taskEvents[0].title || ""}`;
       for (let index = 0; index < taskEvents.length; index += 1) {
         const event = taskEvents[index];
         const next = taskEvents[index + 1];
-        const start = event.ts;
-        const end = next ? next.ts : now;
-        if (end <= start) continue;
-        const left = Math.max(0, (start - midnight) / span * 100);
-        const width = Math.min(100 - left, (end - start) / span * 100);
+        const from = event.ts;
+        const to = next ? next.ts : new Date();
+        if (to <= from) continue;
+        const left = Math.max(0, (from - start) / span * 100);
+        const width = Math.min(100 - left, (to - from) / span * 100);
         if (width <= 0) continue;
         const segment = document.createElement("div");
         segment.className = "seg";
         segment.dataset.kind = event.kind === "status" ? (event.to || "doing") : event.kind;
-        const label = event.kind === "status"
-          ? `${STATUS_ICON[event.to] || ""}${t(`summary.${event.to}`)}`
+        const statusIcon = event.kind === "status"
+          ? (STATUS_ICON[event.to] || "")
+          : "";
+        const labelText = event.kind === "status"
+          ? `${statusIcon}${t(`summary.${event.to}`)}`
           : t(`eventsShort.${event.kind}`,
               { code: event.exit_code == null ? "?" : event.exit_code });
-        segment.textContent = `${taskId} ${label} ${localTime(event.timestamp)}`;
+        segment.textContent = `${labelText} ${localTime(event.timestamp)}`;
+        segment.title = `${taskId} ${event.title || ""} ${event.text || ""}`;
         segment.style.left = `${left}%`;
         segment.style.width = `${Math.max(width, 0.6)}%`;
         track.append(segment);
       }
-      lane.append(track);
+      row.append(label, track);
+      lane.append(row);
     }
     box.append(lane);
   }
 
   const scale = document.createElement("div");
   scale.className = "lane-scale";
-  scale.append(
-    document.createTextNode(fmt(t("laneScale"), {
-      start: midnight.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      end: dayEnd.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    }))
+  const startLabel = start.toLocaleDateString(
+    undefined, { month: "short", day: "numeric" }
   );
+  const endLabel = new Date(end.getTime() - 86400000).toLocaleDateString(
+    undefined, { month: "short", day: "numeric" }
+  );
+  scale.textContent = days > 1
+    ? fmt(t("laneRange"), { from: startLabel, to: endLabel, days })
+    : fmt(t("laneScale"), {
+        start: start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        end: end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      });
   box.append(scale);
 }
 
 /* --------------------------------------------------------------- sessions */
 
-function renderSessions() {
+function sessionGroups() {
   const payload = state.sessions;
+  const rows = (payload && payload.sessions) || [];
+  const repoRoot = (state.overview && state.overview.repo_root) || "";
+  const groups = new Map();
+  for (const row of rows) {
+    const cwd = row.cwd || "";
+    const key = cwd || "?";
+    if (!groups.has(key)) {
+      groups.set(key, {
+        cwd,
+        name: cwd ? cwd.split(/[\\/]+/).filter(Boolean).pop() : "",
+        current: cwd === repoRoot || (repoRoot && cwd.startsWith(repoRoot + "/")),
+        lastActive: 0,
+        rows: [],
+      });
+    }
+    const group = groups.get(key);
+    group.rows.push(row);
+    const stamp = row.last_active_at ? new Date(row.last_active_at).getTime() : 0;
+    group.lastActive = Math.max(group.lastActive, stamp || 0);
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      Number(b.current) - Number(a.current) ||
+      b.lastActive - a.lastActive
+  );
+}
+
+function renderSessions() {
   const section = $("sessions-sec");
   const box = $("sessions");
   box.textContent = "";
+  const payload = state.sessions;
   const rows = (payload && payload.sessions) || [];
   if (!rows.length) {
     section.hidden = true;
@@ -470,22 +597,41 @@ function renderSessions() {
   }
   section.hidden = false;
   const freeLabel = state.lang === "zh" ? "自由会话" : "free session";
-  for (const row of rows) {
-    const line = document.createElement("div");
-    line.className = "session-row";
-    const cells = [
-      row.adapter,
-      t(`states.${row.state}`),
-      row.task || freeLabel,
-      `${row.model || "—"} · ${localTime(row.last_active_at)}`,
-    ];
-    for (const cell of cells) {
-      const span = document.createElement("span");
-      span.textContent = cell;
-      if (cell === cells[3]) span.className = "model";
-      line.append(span);
+
+  for (const group of sessionGroups()) {
+    const block = document.createElement("div");
+    block.className = "session-group";
+    const header = document.createElement("div");
+    header.className = "session-group-head";
+    const title = document.createElement("span");
+    title.className = "session-group-name";
+    title.textContent = group.name || t("unknownProject");
+    if (group.current) {
+      const badge = document.createElement("span");
+      badge.className = "repo-badge";
+      badge.textContent = t("currentProject");
+      title.append(" ", badge);
     }
-    box.append(line);
+    const path = document.createElement("span");
+    path.className = "muted session-path";
+    path.textContent = displayCwd(group.cwd);
+    path.title = group.cwd || "";
+    header.append(title, path);
+    block.append(header);
+
+    for (const row of group.rows) {
+      const line = document.createElement("div");
+      line.className = "session-row";
+      const stateClass = `state-${row.state}`;
+      line.innerHTML =
+        `<span class="session-adapter">${escapeHTML(row.adapter)}</span>` +
+        `<span class="session-state ${stateClass}">${escapeHTML(t(`states.${row.state}`))}</span>` +
+        `<span class="session-task">${escapeHTML(row.task || freeLabel)}</span>` +
+        `<span class="session-model" title="${escapeHTML(row.model || "")}">${escapeHTML(row.model || "—")}</span>` +
+        `<span class="session-time">${escapeHTML(localTime(row.last_active_at))}</span>`;
+      block.append(line);
+    }
+    box.append(block);
   }
 }
 
@@ -493,7 +639,7 @@ function renderSessions() {
 
 function onKeyDown(event) {
   if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
-  const rows = [...document.querySelectorAll("#task-rows tr")];
+  const rows = [...document.querySelectorAll("#task-rows tr[data-id]")];
   if (!rows.length) return;
   const index = rows.findIndex((tr) => tr.dataset.id === state.selected);
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -521,6 +667,7 @@ function showError(error) {
 /* ------------------------------------------------------------------- main */
 
 async function main() {
+  applyUrlOverrides();
   applyTheme();
   await loadTexts();
   $("theme-toggle").addEventListener("click", cycleTheme);
@@ -531,7 +678,9 @@ async function main() {
   $("detail-close").addEventListener("click", closeDetail);
   document.addEventListener("keydown", onKeyDown);
   await fetchAll();
-  startStream();
+  // ?live=0 turns off the SSE stream (screenshots, static previews)
+  const live = new URLSearchParams(location.search).get("live") !== "0";
+  if (live) startStream();
 }
 
 main().catch(showError);

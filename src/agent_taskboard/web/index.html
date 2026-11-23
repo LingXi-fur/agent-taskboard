@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="">
+<html lang="" data-theme="auto">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>atb console</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body data-theme="auto">
+<body>
   <header>
     <div class="header-row">
       <h1>atb</h1>
@@ -20,18 +20,18 @@
   </header>
 
   <main>
-    <section id="swimlanes-sec" aria-labelledby="swimlanes-heading">
+    <section id="swimlanes-sec" class="card" aria-labelledby="swimlanes-heading">
       <h2 id="swimlanes-heading"></h2>
       <div id="swimlanes"></div>
     </section>
 
-    <section id="sessions-sec" aria-labelledby="sessions-heading" hidden>
+    <section id="sessions-sec" class="card" aria-labelledby="sessions-heading" hidden>
       <h2 id="sessions-heading"></h2>
       <div id="sessions"></div>
     </section>
 
     <div class="split">
-      <section id="task-list-sec" aria-labelledby="task-list-heading">
+      <section id="task-list-sec" class="card" aria-labelledby="task-list-heading">
         <h2 id="task-list-heading"></h2>
         <table id="task-table">
           <thead><tr id="task-headers"></tr></thead>
@@ -39,7 +39,7 @@
         </table>
       </section>
 
-      <section id="detail-sec" aria-labelledby="detail-heading" hidden>
+      <section id="detail-sec" class="card" aria-labelledby="detail-heading" hidden>
         <div class="detail-head">
           <h2 id="detail-heading"></h2>
           <button id="detail-close" type="button" title="close (Esc)">&times;</button>
