@@ -130,6 +130,7 @@ created = 2026-11-14T08:00:00Z
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches (`git branch -d` only) for `done`/`dropped` tasks | Implemented |
 | `atb doctor [--json]` | One-shot read-only health check: git version, config, task sheets, active worktrees, leftovers, and orphans | Implemented |
 | `atb log ID [--json] [--verbose]` | Show chronological per-task history: status changes, rework notes, test runs, and merges | Implemented |
+| `atb note ID [TEXT] [--by NAME] [--json] [--lang zh\|en]` | Append a short per-task note (`@FILE` reads a UTF-8 file) or list the notes; notes appear in `atb log`'s timeline and the last three in `atb review` | Implemented |
 | `atb board --html out.html [--stall MIN] [--lang zh\|en]` | Export a standalone static HTML board with `Dirty`/`Idle`/`Ready` columns (hover shows all blockers), stall highlighting, and zh/en localization (default `zh`) | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until a task status/commit/new-sheet change, a stall, or an activity change, then print a summary and exit (exit 3 on timeout) | Implemented |
