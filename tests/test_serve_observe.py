@@ -167,16 +167,38 @@ class ObserveAutoSwitchTests(unittest.TestCase):
         self.claude_home = _claude_session_store(self.base)
 
     def _wait_mode(self, process, port: int) -> str:
-        deadline = time.time() + 15
+        # Poll the subprocess directly and, if it never answers, report its
+        # exit code and stderr so a CI failure explains itself.
+        deadline = time.time() + 30
+        last_error = None
         while time.time() < deadline:
+            if process.poll() is not None:
+                break
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
             try:
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/api/v1/overview", timeout=2
-                ) as response:
-                    return json.loads(response.read().decode("utf-8"))["mode"]
-            except Exception:
-                time.sleep(0.15)
-        self.fail("server did not start")
+                conn.request("GET", "/api/v1/overview",
+                             headers={"Host": f"127.0.0.1:{port}"})
+                response = conn.getresponse()
+                body = response.read().decode("utf-8")
+                if response.status == 200:
+                    return json.loads(body)["mode"]
+                last_error = f"HTTP {response.status}: {body[:200]}"
+            except Exception as exc:  # not listening yet
+                last_error = repr(exc)
+            finally:
+                conn.close()
+            time.sleep(0.15)
+        if process.poll() is None:
+            process.terminate()
+        try:
+            _, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr = process.communicate()
+        self.fail(
+            "server did not start: returncode=%r last_error=%s stderr=%s"
+            % (process.returncode, last_error, (stderr or "")[-2000:])
+        )
 
     def test_starts_in_observe_mode_outside_a_repository(self):
         plain = self.base / "plain-dir"
