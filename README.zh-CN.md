@@ -116,7 +116,8 @@ created = 2026-11-14T08:00:00Z
 | 命令 | 作用 | 状态 |
 |---|---|---|
 | `atb init` | 初始化 `.taskboard/` 与默认 `config.toml`，并检查 git 版本 | 已实现 |
-| `atb new "标题" --agent X [--allow G] [--deny G] [--depends ID]` | 按模板生成任务单 | 已实现 |
+| `atb new "标题" --agent X [--allow G] [--deny G] [--depends ID] [--body @FILE\|-] [--copy-to DIR]` | 生成任务单；`--body` 从 UTF-8 文件或 stdin 直接写入正文，`--copy-to DIR` 额外复制一份到 `DIR/ATB_TASK_<ID>.md` | 已实现 |
+| `atb edit ID [--body @FILE\|-] [--title T] [--agent A] [--add-allow G] [--remove-allow G] [--add-deny G] [--remove-deny G] [--copy-to DIR]` | 不用手改 TOML 即可替换正文/标题/agent、增删 allow/deny（选项可重复；拒绝编辑 `done`/`dropped`） | 已实现 |
 | `atb list [--status S]` / `atb show ID` | 列出任务单 / 查看单个任务单 | 已实现 |
 | `atb start ID [--base REV] [--force]` | 校验依赖、创建独立 worktree，并将 `base` 和 `branch` 写回任务单 | 已实现 |
 | `atb prompt ID [--lang zh\|en]` | 生成完整交接文本（有返工时返工置顶，后接范围与任务正文） | 已实现 |
@@ -125,7 +126,11 @@ created = 2026-11-14T08:00:00Z
 | `atb conflicts [--json]` | 两两对比活跃任务的文件重叠、`merge-tree` 真实冲突与基线漂移 | 已实现 |
 | `atb review ID [--out FILE] [--lang zh\|en] [--json]` | 生成 Markdown 或结构化 JSON（含 `ready`/`blockers`）审查表，汇总检查、测试、活动与历史、doctor 提示、diffstat、冲突与验收清单（会把 `doing`/`rework` 改为 `review`） | 已实现 |
 | `atb rework ID --note "..."` | 将状态改为 `rework` 并追加意见，使下次 `atb prompt` 优先展示 | 已实现 |
-| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | 校验检查通过后执行 `merge --no-ff`，可选清理 worktree/分支；仅在传 `--push` 或开启 `push_after_done = true`（未传 `--no-push`）时推送 | 已实现 |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | 校验检查通过后执行 `merge --no-ff`；有 blocker（与 `review --json` 同一套判定）时拒绝合并——`--force` 列出并忽略，`require_ready_for_done = false` 只警告；可选清理 worktree/分支；仅在传 `--push` 或开启 `push_after_done = true`（未传 `--no-push`）时推送 | 已实现 |
+| `atb sync ID [--rebase \| --merge] [--dry-run]` | 在任务 worktree 内把目标分支同步进任务分支（默认 `--rebase`；脏 worktree 拒绝、冲突自动 abort 复原、`--dry-run` 用 `git merge-tree` 预测） | 已实现 |
+| `atb stats [--since YYYY-MM-DD] [--agent NAME] [--json] [--lang zh\|en]` | 按 agent 汇总产出、返工率、周期中位/P90、等待审查中位与最近测试失败率 | 已实现 |
+| `atb sessions [--since SPEC] [--adapter NAME] [--redact] [--json] [--lang zh\|en]` | 只读观察本机 Claude Code / Codex / Gemini CLI / OpenCode 会话，按工作目录或分支对应到任务（其他工具经 `agent_taskboard.adapters` 入口点注册） | 已实现 |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | 启动本地实时控制台与 JSON API v1（只用标准库、无 CDN、完全离线；见 `docs/api.md`） | 已实现 |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | 预览或安全清理 `done`/`dropped` 任务遗留的 worktree 与分支（只用 `git branch -d`） | 已实现 |
 | `atb doctor [--json]` | 一次性只读环境体检：git 版本、配置、任务单、活跃 worktree、残留与孤儿 worktree | 已实现 |
 | `atb log ID [--json] [--verbose]` | 按时间线追溯单个任务的历史：状态变迁、返工记录、测试运行与合并提交 | 已实现 |

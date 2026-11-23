@@ -23,6 +23,7 @@ from .base import (
     classify_state,
     home,
     parse_iso,
+    pretty_model,
     summarize,
     utcnow,
 )
@@ -104,7 +105,7 @@ class GeminiCliAdapter:
             kind = message.get("type")
             tokens = message.get("tokens")
             if not model and message.get("model"):
-                model = str(message["model"])
+                model = pretty_model(str(message["model"]))
             if usage is None and isinstance(tokens, dict):
                 usage = {
                     "input": int(tokens.get("input") or 0),

@@ -133,6 +133,32 @@ def summarize(text: str, limit: int = SUMMARY_LIMIT) -> str:
     return collapsed[: limit - 1].rstrip() + "…"
 
 
+#: CCR-style routed model names carry the real model hex-encoded after "-h",
+#: e.g. "anthropic/claude-ccr-h7a686970752f676c6d2d352e332d666c617368" is
+#: "zhipu-glm-5.3-flash".
+_CCR_MODEL_RE = re.compile(r"^(?P<route>.*)-h(?P<hex>[0-9a-f]{8,})$")
+
+#: Long unreadable model ids are truncated to this length for display.
+MODEL_DISPLAY_LIMIT = 24
+
+
+def pretty_model(name: str) -> str:
+    """Decode hex-encoded routed model names; truncate anything unreadable."""
+    if not name:
+        return ""
+    match = _CCR_MODEL_RE.match(name)
+    if match is not None:
+        try:
+            decoded = bytes.fromhex(match.group("hex")).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            decoded = ""
+        if decoded and all(char.isprintable() for char in decoded):
+            return decoded
+    if len(name) > MODEL_DISPLAY_LIMIT:
+        return name[: MODEL_DISPLAY_LIMIT - 1].rstrip() + "…"
+    return name
+
+
 def text_from_content(content: Any) -> str:
     """Extract displayable text from an OpenAI/Anthropic content value."""
     if isinstance(content, str):

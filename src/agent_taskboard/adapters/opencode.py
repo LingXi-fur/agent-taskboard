@@ -23,6 +23,7 @@ from .base import (
     classify_state,
     epoch_ms,
     home,
+    pretty_model,
     summarize,
     text_from_content,
     utcnow,
@@ -166,11 +167,13 @@ class OpenCodeAdapter:
             try:
                 parsed = json.loads(model_raw)
                 if isinstance(parsed, dict):
-                    model = str(parsed.get("id") or parsed.get("model") or "")
+                    model = pretty_model(
+                        str(parsed.get("id") or parsed.get("model") or "")
+                    )
                 elif isinstance(parsed, str):
-                    model = parsed
+                    model = pretty_model(parsed)
             except (json.JSONDecodeError, TypeError):
-                model = str(model_raw)
+                model = pretty_model(str(model_raw))
 
         busy: bool | None = None
         if time_busy is not None and time_idle is not None:
