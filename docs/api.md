@@ -57,8 +57,11 @@ The `atb review --json` payload, plus the full event list:
 `{id, title, agent, status, branch, base, scope{denied, outside,
 uncommitted}, test{result, last_run}, activity{dirty, idle_seconds,
 rework_count, status_history}, doctor_fails, diffstat{files, totals},
-conflicts, mergeable, drift, acceptance[{text, checked}], notes, ready,
-blockers, warnings, events}`. `blockers` are the reasons a merge is
+conflicts, mergeable, drift, acceptance[{text, checked}], notes, usage,
+ready, blockers, warnings, events}`. `usage` is the token usage of the
+agent sessions mapped to this task: `{sessions, with_usage, missing}` plus
+any of `input`, `output`, `cache_read`, `cache_write`, `total` that were
+recorded (tokens only — atb does not price them). `blockers` are the reasons a merge is
 refused (only target-branch conflicts do that); `warnings` are advisory —
 overlaps with other active tasks (`code: task_conflict`) that do not stop
 the merge.

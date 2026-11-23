@@ -7,7 +7,11 @@ originator), ``turn_context`` lines carry the model and the current cwd,
 ``event_msg/token_count`` lines the cumulative token usage, and
 ``response_item`` lines the messages. Files are zstd-compressed in newer
 versions, so the reader shells out to the ``zstd`` binary and keeps only a
-small head/tail window in memory. Override the root with ``ATB_CODEX_HOME``.
+small head/tail window in memory. Token usage comes from the cumulative
+``total_token_usage`` (``event_msg/token_count``) or ``thread_token_usage``
+(``token_usage_record``); when only per-turn ``usage`` is recorded the turns
+are summed with a ``response_id``/``turn_id`` de-duplication. Override the
+root with ``ATB_CODEX_HOME``.
 """
 
 from __future__ import annotations
@@ -22,11 +26,14 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    add_usage,
     classify_state,
+    finish_usage,
     home,
     json_lines,
     parse_iso,
     pretty_model,
+    usage_bucket,
     read_head,
     read_tail,
     summarize,
@@ -85,13 +92,16 @@ class CodexAdapter:
         return meta
 
     @staticmethod
-    def _usage_from(total: dict) -> dict[str, int]:
-        return {
-            "input": int(total.get("input_tokens") or 0),
-            "output": int(total.get("output_tokens") or 0),
-            "cache_read": int(total.get("cached_input_tokens") or 0),
-            "cache_write": int(total.get("cache_write_input_tokens") or 0),
-        }
+    def _usage_from(total: dict) -> dict[str, int] | None:
+        """Map codex token fields to the shared usage keys (only present ones)."""
+        totals, present = usage_bucket()
+        add_usage(totals, present, "input", total.get("input_tokens"))
+        add_usage(totals, present, "output", total.get("output_tokens"))
+        add_usage(totals, present, "cache_read", total.get("cached_input_tokens"))
+        add_usage(
+            totals, present, "cache_write", total.get("cache_write_input_tokens")
+        )
+        return finish_usage(totals, present)
 
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
@@ -115,6 +125,8 @@ class CodexAdapter:
 
         model = ""
         usage: dict[str, int] | None = None
+        turn_totals, turn_present = usage_bucket()
+        seen_turns: set[str] = set()
         last_active: datetime | None = None
         last_text = ""
         last_role = ""
@@ -136,9 +148,28 @@ class CodexAdapter:
                 if isinstance(total, dict):
                     usage = self._usage_from(total)
             elif kind == "token_usage_record":
-                total = payload.get("usage") or payload.get("thread_token_usage")
-                if isinstance(total, dict):
-                    usage = self._usage_from(total)
+                cumulative = payload.get("thread_token_usage")
+                if isinstance(cumulative, dict):
+                    # cumulative for the thread: last one wins
+                    usage = self._usage_from(cumulative)
+                else:
+                    per_turn = payload.get("usage")
+                    if isinstance(per_turn, dict):
+                        record_id = str(
+                            payload.get("response_id")
+                            or payload.get("turn_id")
+                            or ""
+                        )
+                        if record_id == "" or record_id not in seen_turns:
+                            seen_turns.add(record_id)
+                            add_usage(turn_totals, turn_present, "input",
+                                      per_turn.get("input_tokens"))
+                            add_usage(turn_totals, turn_present, "output",
+                                      per_turn.get("output_tokens"))
+                            add_usage(turn_totals, turn_present, "cache_read",
+                                      per_turn.get("cached_input_tokens"))
+                            add_usage(turn_totals, turn_present, "cache_write",
+                                      per_turn.get("cache_write_input_tokens"))
             elif kind == "response_item":
                 role = payload.get("role")
                 if role in ("user", "assistant"):
@@ -156,6 +187,8 @@ class CodexAdapter:
                     if text:
                         last_text = text
 
+        if usage is None:
+            usage = finish_usage(turn_totals, turn_present)
         if last_active is None or last_active < since:
             return None
         return Session(

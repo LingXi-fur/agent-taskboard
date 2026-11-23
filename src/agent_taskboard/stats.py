@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import gitops
+from . import gitops, usage
 from .history import rework_count
 from .sheet import STATUSES, Sheet
 
@@ -235,8 +235,15 @@ def summarize(
     *,
     since: float | None = None,
     agent: str | None = None,
+    cfg=None,
 ) -> dict[str, Any]:
-    """Aggregate per-agent statistics; never raises on missing history."""
+    """Aggregate per-agent statistics; never raises on missing history.
+
+    ``cfg`` enables the token metric: sessions are mapped to tasks exactly
+    like ``atb sessions`` does and summed per task (tokens only, no money).
+    Without ``cfg`` the metric is ``None`` — this keeps the benchmark and
+    unit tests free of session-store scans.
+    """
     facts = collect_task_facts(repo_root, sheets)
     if since is not None:
         # A task with no recorded activity at all cannot be dated; when a
@@ -250,6 +257,17 @@ def summarize(
         ]
     if agent is not None:
         facts = [fact for fact in facts if fact["agent"] == agent]
+
+    per_task_usage: dict[str, dict] = {}
+    if cfg is not None:
+        scan_since = (
+            datetime.fromtimestamp(since, tz=timezone.utc)
+            if since is not None
+            else usage.scan_since(None)
+        )
+        per_task_usage = usage.task_usage(
+            repo_root, cfg, sheets, since=scan_since
+        )
 
     groups: dict[str, list[dict[str, Any]]] = {}
     for fact in facts:
@@ -279,6 +297,11 @@ def summarize(
         ]
         tested = [fact for fact in done if fact["last_test_exit"] is not None]
         failed = [fact for fact in tested if fact["last_test_exit"] != 0]
+        token_values = []
+        for fact in done:
+            total = _usage_total(per_task_usage.get(fact["id"]))
+            if total is not None:
+                token_values.append(float(total))
         missing = [fact for fact in tasks if not fact["has_history"]]
         missing_total += len(missing)
         agents.append({
@@ -298,6 +321,11 @@ def summarize(
             "review_wait_samples": len(waits),
             "test_failure_rate": _rate(len(failed), len(tested)),
             "test_samples": len(tested),
+            "avg_tokens_per_done_task": (
+                round(sum(token_values) / len(token_values))
+                if token_values else None
+            ),
+            "token_samples": len(token_values),
             "missing_history": len(missing),
         })
 
@@ -316,6 +344,31 @@ def summarize(
 # --------------------------------------------------------------------------- #
 # rendering
 # --------------------------------------------------------------------------- #
+
+def _usage_total(summary: dict | None) -> int | None:
+    """Total tokens of one task's usage summary (None when nothing recorded)."""
+    if not summary:
+        return None
+    if summary.get("total") is not None:
+        return int(summary["total"])
+    parts = [
+        int(summary[key])
+        for key in ("input", "output", "cache_read", "cache_write")
+        if summary.get(key) is not None
+    ]
+    return sum(parts) if parts else None
+
+
+def _fmt_tokens(value: float | None) -> str:
+    if value is None:
+        return "—"
+    total = int(value)
+    if total >= 1_000_000:
+        return f"{total / 1_000_000:.1f}M"
+    if total >= 1_000:
+        return f"{total / 1_000:.0f}k"
+    return str(total)
+
 
 def _fmt_pct(rate: float | None) -> str:
     return "—" if rate is None else f"{rate * 100:.0f}%"
@@ -344,6 +397,7 @@ _TEXTS: dict[str, dict[str, Any]] = {
         "headers": (
             "agent", "done", "dropped", "进行中", "返工率",
             "平均返工", "周期中位", "周期P90", "审查等待中位", "测试失败率",
+            "平均token/任务",
         ),
         "missing": "注：{count} 个任务缺少状态历史，未计入周期统计。",
         "missing_none": "注：无缺少历史的任务。",
@@ -355,7 +409,7 @@ _TEXTS: dict[str, dict[str, Any]] = {
         "headers": (
             "agent", "done", "dropped", "active", "rework rate",
             "avg reworks", "cycle median", "cycle P90", "review wait median",
-            "test failures",
+            "test failures", "avg tokens/task",
         ),
         "missing": "Note: {count} task(s) have no status history and are "
                    "excluded from cycle times.",
@@ -387,6 +441,7 @@ def render_stats(summary: dict[str, Any], *, lang: str = "zh") -> str:
                 _fmt_duration(entry["cycle_p90_seconds"]),
                 _fmt_duration(entry["review_wait_median_seconds"]),
                 _fmt_pct(entry["test_failure_rate"]),
+                _fmt_tokens(entry["avg_tokens_per_done_task"]),
             ])
         widths = [
             max(len(header), *(len(row[index]) for row in rows))

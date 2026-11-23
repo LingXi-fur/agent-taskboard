@@ -207,6 +207,7 @@ class StatsTests(unittest.TestCase):
                     "avg_rework_count", "cycle_median_seconds", "cycle_p90_seconds",
                     "cycle_samples", "review_wait_median_seconds",
                     "review_wait_samples", "test_failure_rate", "test_samples",
+                    "avg_tokens_per_done_task", "token_samples",
                     "missing_history",
                 },
             )

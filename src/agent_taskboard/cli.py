@@ -20,7 +20,12 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import adapters, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats
+from . import adapters, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats, usage
+from .sessions import (
+    collect_sessions as _collect_sessions,
+    map_session_to_task as _map_session_to_task,
+    session_task_maps as _session_task_maps,
+)
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -1280,8 +1285,9 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
     uncommitted = checks.task_uncommitted(sheet, cfg)
     all_paths = list(dict.fromkeys(committed + uncommitted))
     denied, outside = checks.classify_violations(all_paths, sheet.allow, sheet.deny)
+    all_sheets = _load_tasks(repo_root)
     other_active = [
-        s for s in _load_tasks(repo_root)
+        s for s in all_sheets
         if s.status in checks.ACTIVE_STATUSES and s.id != sheet.id
     ]
     result = checks.compute_conflicts([sheet] + other_active, cfg, repo_root)
@@ -1319,6 +1325,10 @@ def _review_info(sheet: Sheet, cfg: config.Config, repo_root: Path) -> dict:
         "drift": drift,
         "acceptance": _acceptance_text(sheet.body),
         "notes": notes.load_notes(repo_root, sheet.id)[-3:],
+        "usage": usage.task_usage(
+            repo_root, cfg, all_sheets,
+            since=usage.scan_since(sheet), task_id=sheet.id,
+        ),
     }
 
 
@@ -2215,7 +2225,8 @@ def cmd_stats(args: argparse.Namespace) -> int:
     sheets = _load_tasks(repo_root)
     since = _parse_since(args.since) if args.since else None
     summary = stats.summarize(
-        repo_root, sheets, since=since, agent=args.agent
+        repo_root, sheets, since=since, agent=args.agent,
+        cfg=config.load_config(repo_root),
     )
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -2257,80 +2268,6 @@ def _parse_sessions_since(spec: str | None) -> tuple[object, str]:
     raise AtbError(
         f"invalid --since {spec!r}: use Nh/Nd, YYYY-MM-DD or an ISO datetime"
     )
-
-
-def _collect_sessions(
-    since: object, adapter_filter: str | None
-) -> tuple[list, list[dict]]:
-    """Gather sessions from every adapter; one adapter failing never stops."""
-    state = adapters.load_adapters()
-    sessions: list = []
-    entries: list[dict] = []
-    for error in state.errors:
-        entries.append({
-            "name": error["adapter"],
-            "available": False,
-            "error": f"failed to load: {error['error']}",
-            "count": 0,
-        })
-    for adapter in state.adapters:
-        if adapter_filter and adapter.name != adapter_filter:
-            continue
-        entry = {
-            "name": adapter.name,
-            "available": False,
-            "error": None,
-            "count": 0,
-        }
-        try:
-            entry["available"] = bool(adapter.available())
-        except Exception as exc:  # adapter bugs must not break the page
-            entry["error"] = f"{type(exc).__name__}: {exc}"
-        if entry["available"] and entry["error"] is None:
-            try:
-                for session in adapter.sessions(since):
-                    sessions.append(session)
-                    entry["count"] += 1
-            except Exception as exc:
-                entry["error"] = f"{type(exc).__name__}: {exc}"
-        entries.append(entry)
-    return sessions, entries
-
-
-def _session_task_maps(
-    cfg: config.Config, sheets: list[Sheet]
-) -> tuple[list[tuple[Path, str]], dict[str, str]]:
-    """Worktree paths and branches of started tasks, for session mapping."""
-    root = config.resolve_worktree_root(cfg)
-    worktrees: list[tuple[Path, str]] = []
-    branches: dict[str, str] = {}
-    for sheet in sheets:
-        if not sheet.branch:
-            continue
-        worktrees.append(((root / sheet.id).resolve(), sheet.id))
-        branches.setdefault(sheet.branch, sheet.id)
-    worktrees.sort(key=lambda item: item[1])
-    return worktrees, branches
-
-
-def _map_session_to_task(
-    session, worktrees: list[tuple[Path, str]], branches: dict[str, str]
-) -> str | None:
-    """Map a session to a task: worktree cwd first, then branch name."""
-    if session.cwd:
-        try:
-            cwd = Path(session.cwd).resolve()
-        except OSError:
-            cwd = None
-        if cwd is not None:
-            for worktree, task_id in worktrees:
-                if cwd == worktree or worktree in cwd.parents:
-                    return task_id
-    if session.branch:
-        task_id = branches.get(session.branch)
-        if task_id is not None:
-            return task_id
-    return None
 
 
 def _fmt_session_age(moment: object | None) -> str:
@@ -2406,7 +2343,11 @@ def _session_to_row(session, task_id: str | None, redact: bool) -> dict:
         "state": session.state,
         "model": session.model,
         "last_message": None if redact else session.last_message,
-        "usage": session.usage,
+        "usage": (
+            session.resolved_usage()
+            if hasattr(session, "resolved_usage")
+            else session.usage
+        ),
         "task": task_id,
         "mapped": task_id is not None,
     }

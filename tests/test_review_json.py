@@ -127,7 +127,7 @@ class ReviewJsonTests(unittest.TestCase):
                 "id", "title", "agent", "status", "branch", "base",
                 "scope", "test", "activity", "doctor_fails", "diffstat",
                 "conflicts", "mergeable", "drift", "acceptance", "notes", "ready",
-                "blockers", "warnings",
+                "blockers", "warnings", "usage",
             }
             self.assertEqual(set(data), expected_top)
             self.assertEqual(data["id"], tid)

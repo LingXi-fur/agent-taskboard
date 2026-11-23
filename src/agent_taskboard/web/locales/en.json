@@ -56,7 +56,10 @@
     "diffstatValue": "{files} file(s), +{ins} −{del}",
     "blockers": "blockers",
     "none": "none",
-    "warnings": "warnings"
+    "warnings": "warnings",
+    "usage": "token usage",
+    "usageSessions": "{count} session(s)",
+    "usageMissing": "{count} without data"
   },
   "history": "Status history",
   "acceptance": "Acceptance checklist",
