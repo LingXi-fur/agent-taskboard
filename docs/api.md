@@ -15,19 +15,23 @@ charset=utf-8`.
 - Unknown routes return `404` with `{"error": "..."}`; unknown task ids too.
 - Unexpected failures return `500` with `{"error": "..."}` and never kill the
   server.
-- Requests carrying an `Origin` header that does not match the request's
-  `Host` are rejected with `403` before any data is read — so a web page from
-  another origin cannot read your local task data. Requests without `Origin`
-  (curl, tests) are fine.
+- Every request's `Host` header must be one of `127.0.0.1:<port>`,
+  `localhost:<port>`, `[::1]:<port>` or the address given with `--host`;
+  anything else — including a DNS name that resolves to 127.0.0.1 (DNS
+  rebinding) — is rejected with `403` before any data is read. Requests
+  carrying a non-local `Origin` header are rejected the same way. Requests
+  without `Origin` (curl, tests) are fine.
 - The server binds to `127.0.0.1` unless `--host` says otherwise; any
   non-loopback `--host` prints a warning.
 
 ## `GET /api/v1/overview`
 
-The summary strip: `{"target", "upstream", "summary", "active",
+The summary strip: `{"target", "repo_root", "upstream", "summary", "active",
 "awaiting_review", "merged_today", "generated_at"}`.
 
 - `target` — the configured target branch (`target` in `config.toml`).
+- `repo_root` — the repository being served; the UI uses it to put this
+  project's sessions first.
 - `upstream` — `{target, upstream, ahead, behind}` from local refs only
   (`upstream` is `null` without a configured upstream; nothing is fetched).
 - `summary` — task count per status: `todo`, `doing`, `review`, `rework`,
@@ -65,14 +69,15 @@ events}`.
 --lang en` prints). This is what the UI's "copy handoff" button puts on the
 clipboard. No task state is changed.
 
-## `GET /api/v1/events?day=YYYY-MM-DD&task=ID`
+## `GET /api/v1/events?day=YYYY-MM-DD&days=N&task=ID`
 
 The day's timeline for the swimlanes: `{"events": [{task, title, agent,
-kind, timestamp, time_local, text, from, to, exit_code, commit}], "count"}`.
-`kind` is `status`, `test`, `rework` or `merge`. With `day`, events are
-filtered to the server's local calendar day; with `task`, to one task.
-Without `day`, all events are returned (this walks each task's history, so
-prefer `day` for polling).
+kind, timestamp, time_local, text, from, to, exit_code, commit}], "count",
+"range"}`. `kind` is `status`, `test`, `rework` or `merge`. With `day`,
+events are filtered to the server's local calendar day; with `days=N`, to
+the last N local days (`range` says which). With `task`, to one task.
+Without any window, all events are returned (this walks each task's
+history, so prefer `day`/`days` for polling).
 
 ## `GET /api/v1/sessions?since=SPEC&adapter=NAME`
 

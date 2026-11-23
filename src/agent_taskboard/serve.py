@@ -72,6 +72,7 @@ def _payload_overview(repo_root: Path, cfg: config.Config, rows: list[dict]) -> 
             summary[row["status"]] += 1
     return {
         "target": cfg.target,
+        "repo_root": str(repo_root),
         "upstream": gitops.upstream_status(cfg.target, cwd=repo_root),
         "summary": summary,
         "active": sum(
@@ -159,16 +160,28 @@ def _payload_events(
     sheets: list[Sheet],
     *,
     day: str | None,
+    days: int | None,
     task_id: str | None,
 ) -> dict:
-    """Every task's history events, optionally filtered to one local day."""
-    cli = _cli()
+    """Every task's history events, filtered to a local day or a day range."""
     items: list[dict[str, Any]] = []
     if task_id is not None:
         selected = [sheet for sheet in sheets if sheet.id == task_id]
         if not selected:
             raise AtbError(f"task {task_id!r} not found")
         sheets = selected
+
+    if day is not None:
+        wanted = {day}
+    elif days is not None:
+        today = datetime.now().astimezone()
+        wanted = {
+            (today - timedelta(offset)).strftime("%Y-%m-%d")
+            for offset in range(max(1, days))
+        }
+    else:
+        wanted = None
+
     for sheet in sheets:
         try:
             collected = history.collect_task_history(repo_root, cfg, sheet)
@@ -177,9 +190,9 @@ def _payload_events(
         for event in collected["events"]:
             if event.get("kind") not in ("status", "test", "rework", "merge"):
                 continue
-            if day is not None:
+            if wanted is not None:
                 stamp = _parse_iso_local(event.get("timestamp"))
-                if stamp is None or stamp.strftime("%Y-%m-%d") != day:
+                if stamp is None or stamp.strftime("%Y-%m-%d") not in wanted:
                     continue
             items.append({
                 "task": sheet.id,
@@ -195,7 +208,17 @@ def _payload_events(
                 "commit": event.get("commit"),
             })
     items.sort(key=lambda item: item.get("timestamp") or "")
-    return {"events": items, "count": len(items)}
+    if day is not None:
+        range_info = {"from": day, "to": day, "days": 1}
+    elif days is not None:
+        range_info = {
+            "from": min(wanted),
+            "to": max(wanted),
+            "days": max(1, days),
+        }
+    else:
+        range_info = {"from": None, "to": None, "days": None}
+    return {"events": items, "count": len(items), "range": range_info}
 
 
 def _parse_iso_local(value: Any) -> datetime | None:
@@ -267,10 +290,34 @@ def _state_checksum(repo_root: Path) -> str:
 class _ServeServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, handler, *, repo_root: Path, poll: float):
+    def __init__(
+        self,
+        address,
+        handler,
+        *,
+        repo_root: Path,
+        poll: float,
+        allowed_hosts: set[str],
+    ):
         super().__init__(address, handler)
         self.repo_root = repo_root
         self.poll = poll
+        #: Host headers we answer to. Everything else — including a name that
+        #: some DNS record points at 127.0.0.1 (DNS rebinding) — gets 403.
+        self.allowed_hosts = allowed_hosts
+
+
+def _allowed_hosts(host: str, port: int) -> set[str]:
+    """The Host headers this server answers, given its bind address."""
+    hosts = {
+        f"127.0.0.1:{port}",
+        f"localhost:{port}",
+        f"[::1]:{port}",
+        f"{host.lower()}:{port}",
+    }
+    if port in (80, 443):
+        hosts.update({"127.0.0.1", "localhost", "[::1]", host.lower()})
+    return hosts
 
 
 class _RequestHandler(BaseHTTPRequestHandler):
@@ -282,12 +329,22 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
     # -- security -------------------------------------------------------- #
 
+    def _host_allowed(self) -> bool:
+        """Every request is Host-checked, Origin or not (DNS-rebinding guard).
+
+        A hostile page can point its own domain at 127.0.0.1 so the Origin
+        and Host headers agree; only an explicit allow-list of local host
+        names defeats that.
+        """
+        host = (self.headers.get("Host") or "").strip().lower()
+        return host in self.server.allowed_hosts
+
     def _origin_allowed(self) -> bool:
         origin = self.headers.get("Origin")
         if not origin:
             return True  # curl, tests, EventSource on same origin all fine
-        host = self.headers.get("Host", "")
-        return urllib.parse.urlparse(origin).netloc.lower() == host.lower()
+        netloc = urllib.parse.urlparse(origin).netloc.lower()
+        return netloc in self.server.allowed_hosts
 
     # -- helpers --------------------------------------------------------- #
 
@@ -314,6 +371,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
     # -- routing --------------------------------------------------------- #
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
+        if not self._host_allowed():
+            self._send_json({"error": "host not allowed"}, status=403)
+            return
         if not self._origin_allowed():
             self._send_json({"error": "origin not allowed"}, status=403)
             return
@@ -344,10 +404,21 @@ class _RequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/v1/events":
                 repo_root, cfg, sheets = self._context()
                 day = (query.get("day") or [None])[0]
+                days_raw = (query.get("days") or [None])[0]
+                days = None
+                if days_raw is not None:
+                    try:
+                        days = max(1, int(days_raw))
+                    except ValueError:
+                        self._send_json(
+                            {"error": f"invalid days {days_raw!r}"}, status=400
+                        )
+                        return
                 task_id = (query.get("task") or [None])[0]
                 self._send_json(
                     _payload_events(
-                        repo_root, cfg, sheets, day=day, task_id=task_id
+                        repo_root, cfg, sheets, day=day, days=days,
+                        task_id=task_id,
                     )
                 )
             elif path == "/api/v1/sessions":
@@ -429,9 +500,16 @@ def build_server(
     port: int = 8766,
     poll: float = 5.0,
 ) -> _ServeServer:
-    return _ServeServer(
-        (host, port), _RequestHandler, repo_root=repo_root, poll=poll
+    server = _ServeServer(
+        (host, port),
+        _RequestHandler,
+        repo_root=repo_root,
+        poll=poll,
+        allowed_hosts=set(),
     )
+    # the real port is only known after bind (tests ask for an ephemeral one)
+    server.allowed_hosts = _allowed_hosts(host, server.server_address[1])
+    return server
 
 
 def run(

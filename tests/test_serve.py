@@ -190,11 +190,12 @@ class ServeTests(unittest.TestCase):
         self.assertEqual(
             set(payload),
             {
-                "target", "upstream", "summary", "active", "awaiting_review",
-                "merged_today", "generated_at",
+                "target", "repo_root", "upstream", "summary", "active",
+                "awaiting_review", "merged_today", "generated_at",
             },
         )
         self.assertEqual(payload["target"], "main")
+        self.assertEqual(payload["repo_root"], str(self.repo))
         self.assertEqual(payload["active"], 1)
         self.assertEqual(payload["awaiting_review"], 1)
         self.assertEqual(payload["merged_today"], 0)  # no merge commits today
@@ -346,6 +347,81 @@ class ServeTests(unittest.TestCase):
         # no Origin header at all (curl, EventSource same-origin): allowed
         status, _, _ = self._get("/api/v1/overview")
         self.assertEqual(status, 200)
+
+    def _raw_get(
+        self, path: str, host: str, origin: str | None = None
+    ) -> tuple[int, dict]:
+        """Issue a request with a forged Host header (bypasses urllib)."""
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.port, timeout=10
+        )
+        try:
+            connection.putrequest("GET", path, skip_host=True)
+            connection.putheader("Host", host)
+            if origin is not None:
+                connection.putheader("Origin", origin)
+            connection.endheaders()
+            response = connection.getresponse()
+            body = response.read().decode("utf-8")
+            return response.status, json.loads(body)
+        finally:
+            connection.close()
+
+    def test_dns_rebinding_forged_host_is_rejected(self):
+        """Host+Origin from an attacker domain that resolves here: 403.
+
+        This is the DNS-rebinding case: the browser sends the attacker's
+        hostname in both headers and they agree, so comparing Origin to Host
+        alone would let the page read local task data. The Host allow-list
+        must reject it.
+        """
+        status, payload = self._raw_get(
+            "/api/v1/tasks",
+            host="evil.example:8766",
+            origin="http://evil.example:8766",
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("host", payload["error"])
+
+        # requests without Origin are Host-checked too
+        status, payload = self._raw_get(
+            "/api/v1/tasks", host="evil.example:8766"
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("host", payload["error"])
+
+        # the overview and sessions payloads must be unreachable the same way
+        for path in ("/api/v1/overview", "/api/v1/sessions"):
+            status, _ = self._raw_get(
+                path, host="evil.example:8766",
+                origin="http://evil.example:8766",
+            )
+            self.assertEqual(status, 403, path)
+
+    def test_local_hosts_are_accepted(self):
+        for host in (
+            f"127.0.0.1:{self.port}",
+            f"localhost:{self.port}",
+        ):
+            status, payload = self._raw_get("/api/v1/overview", host=host)
+            self.assertEqual(status, 200, host)
+            self.assertEqual(payload["target"], "main")
+
+    def test_allowed_hosts_list(self):
+        server = serve.build_server(self.repo, host="0.0.0.0", port=0, poll=5)
+        try:
+            port = server.server_address[1]
+            for name in (
+                f"127.0.0.1:{port}",
+                f"localhost:{port}",
+                f"[::1]:{port}",
+                f"0.0.0.0:{port}",
+            ):
+                self.assertIn(name, server.allowed_hosts)
+            self.assertNotIn("evil.example:8766", server.allowed_hosts)
+            self.assertNotIn(f"127.0.0.2:{port}", server.allowed_hosts)
+        finally:
+            server.server_close()
 
     def test_nonlocal_host_warning(self):
         self.assertIsNone(serve.nonlocal_host_warning("127.0.0.1"))
