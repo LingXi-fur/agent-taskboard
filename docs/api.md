@@ -72,8 +72,10 @@ clipboard. No task state is changed.
 ## `GET /api/v1/events?day=YYYY-MM-DD&days=N&task=ID`
 
 The day's timeline for the swimlanes: `{"events": [{task, title, agent,
-kind, timestamp, time_local, text, from, to, exit_code, commit}], "count",
-"range"}`. `kind` is `status`, `test`, `rework` or `merge`. With `day`,
+kind, timestamp, time_local, text, from, to, exit_code, commit, by, note}],
+"count", "range"}`. `kind` is `status`, `test`, `rework`, `merge` or
+`note`; `note` events carry the author in `by` and the full text in
+`note`. With `day`,
 events are filtered to the server's local calendar day; with `days=N`, to
 the last N local days (`range` says which). With `task`, to one task.
 Without any window, all events are returned (this walks each task's

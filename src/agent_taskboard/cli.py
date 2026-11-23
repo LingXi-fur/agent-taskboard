@@ -2167,10 +2167,13 @@ def _render_note_line(note: dict[str, str], lang: str) -> str:
 def cmd_note(args: argparse.Namespace) -> int:
     repo_root = config.find_repo_root()
     _require_initialized(repo_root)
-    sheet = _load_task(repo_root, args.id)  # missing task -> AtbError
+    # notes always belong to the MAIN worktree: an agent runs this from its
+    # linked task worktree, and the sheet may not even exist in that checkout
+    board_root = notes.storage_root(repo_root)
+    sheet = _load_task(board_root, args.id)  # missing task -> AtbError
 
     if args.text is None:
-        stored = notes.load_notes(repo_root, sheet.id)
+        stored = notes.load_notes(board_root, sheet.id)
         if args.json:
             print(json.dumps(
                 {"id": sheet.id, "notes": stored},
@@ -2187,7 +2190,7 @@ def cmd_note(args: argparse.Namespace) -> int:
     if text.startswith("@"):
         text = _read_body_argument(text)
     by = args.by or sheet.agent or "unknown"
-    record = notes.append_note(repo_root, sheet.id, text, by)
+    record = notes.append_note(board_root, sheet.id, text, by)
     if args.json:
         print(json.dumps(
             {"id": sheet.id, **record}, ensure_ascii=False, indent=2

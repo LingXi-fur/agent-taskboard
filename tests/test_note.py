@@ -288,6 +288,61 @@ class NoteTests(unittest.TestCase):
             self.assertIn("## Recent notes", en.stdout)
 
     # ------------------------------------------------------------------ #
+    # linked worktrees and the console
+    # ------------------------------------------------------------------ #
+
+    def test_note_written_in_worktree_lands_in_main_repo(self):
+        """Notes from a linked task worktree are stored in the main repo."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo)
+            self.assertEqual(self._atb(repo, "start", "T001").returncode, 0)
+            worktree = base / "repo-tasks" / "T001"  # default worktree_root
+
+            written = self._atb(worktree, "note", "T001", "from the worktree")
+            self.assertEqual(written.returncode, 0, written.stderr)
+
+            main_notes = self._notes(repo)
+            self.assertEqual(len(main_notes), 1, "note must land in the main repo")
+            self.assertEqual(main_notes[0]["text"], "from the worktree")
+            self.assertFalse(
+                (worktree / ".taskboard" / "notes" / "T001.jsonl").exists(),
+                "the worktree must not keep its own notes file",
+            )
+
+            listed = self._atb(repo, "note", "T001")
+            self.assertIn("from the worktree", listed.stdout)
+            log = self._atb(repo, "log", "T001")
+            self.assertEqual(log.returncode, 0, log.stderr)
+            self.assertIn("备注（opencode）：from the worktree", log.stdout)
+            self.assertIn("from the worktree", self._atb(worktree, "note", "T001").stdout)
+
+    def test_serve_events_include_notes(self):
+        from agent_taskboard import cli as cli_mod
+        from agent_taskboard import config as config_mod
+        from agent_taskboard import serve as serve_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self._setup(base)
+            self._write_sheet(repo)
+            self.assertEqual(
+                self._atb(repo, "note", "T001", "console-visible note").returncode, 0
+            )
+
+            sheets = cli_mod._load_tasks(repo)
+            cfg = config_mod.load_config(repo)
+            payload = serve_mod._payload_events(
+                repo, cfg, sheets, day=None, days=None, task_id="T001"
+            )
+            notes = [e for e in payload["events"] if e["kind"] == "note"]
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0]["note"], "console-visible note")
+            self.assertEqual(notes[0]["by"], "opencode")
+            self.assertEqual(notes[0]["task"], "T001")
+
+    # ------------------------------------------------------------------ #
     # .gitignore and doctor
     # ------------------------------------------------------------------ #
 

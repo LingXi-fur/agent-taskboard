@@ -14,15 +14,31 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import gitops
 from .errors import AtbError
 
 #: Maximum length of a single note, in characters (no truncation).
 NOTE_LIMIT = 4000
 
 
+def storage_root(repo_root: Path) -> Path:
+    """The repository whose ``.taskboard/notes`` holds every note.
+
+    Notes are written from wherever an agent works — usually a linked task
+    worktree — but they must be visible in the main repository (`atb log`,
+    `atb review`, `atb serve`). So the storage root is always the MAIN
+    worktree, found through the shared git directory, never the current
+    checkout.
+    """
+    try:
+        return gitops.main_worktree_root(repo_root)
+    except gitops.GitError:
+        return Path(repo_root)
+
+
 def notes_path(repo_root: Path, task_id: str) -> Path:
     """Return the JSONL file that stores ``task_id``'s notes."""
-    return repo_root / ".taskboard" / "notes" / f"{task_id}.jsonl"
+    return storage_root(repo_root) / ".taskboard" / "notes" / f"{task_id}.jsonl"
 
 
 def validate_text(text: str) -> str:

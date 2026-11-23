@@ -525,8 +525,21 @@ function renderSwimlanes() {
           ? `${statusIcon}${t(`summary.${event.to}`)}`
           : t(`eventsShort.${event.kind}`,
               { code: event.exit_code == null ? "?" : event.exit_code });
-        segment.textContent = `${labelText} ${localTime(event.timestamp)}`;
-        segment.title = `${taskId} ${event.title || ""} ${event.text || ""}`;
+        if (event.kind === "note") {
+          // a small marker only; the note body lives in title/aria-label,
+          // never in innerHTML, so no escaping path is involved
+          segment.textContent = "✎";
+          const detail = `${taskId} ${t("eventsShort.note")} · ${event.by || "—"} · ${localTime(event.timestamp)} · ${event.note || event.text || ""}`;
+          segment.title = detail;
+          segment.setAttribute("aria-label", detail);
+        } else {
+          segment.textContent = `${labelText} ${localTime(event.timestamp)}`;
+          segment.title = `${taskId} ${event.title || ""} ${event.text || ""}`;
+          segment.setAttribute(
+            "aria-label",
+            `${taskId} ${labelText} ${localTime(event.timestamp)} ${event.title || ""}`
+          );
+        }
         segment.style.left = `${left}%`;
         segment.style.width = `${Math.max(width, 0.6)}%`;
         track.append(segment);
