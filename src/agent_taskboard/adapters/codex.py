@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ from .base import (
     home,
     json_lines,
     parse_iso,
+    pretty_model,
     read_head,
     read_tail,
     summarize,
@@ -64,6 +66,33 @@ class CodexAdapter:
             if session is not None:
                 yield session
 
+    def _session_meta(self, head: str) -> dict:
+        """Parse the ``session_meta`` line out of the head window.
+
+        That line often exceeds any sane head window because it embeds the
+        (huge) base instructions, so when full JSON parsing fails the few
+        scalar string fields we need are pulled straight out of the
+        truncated text with anchored patterns.
+        """
+        for obj in json_lines(head):
+            if obj.get("type") == "session_meta":
+                return obj.get("payload") or {}
+        meta: dict = {}
+        for key in ("session_id", "timestamp", "cwd", "originator", "model"):
+            match = re.search(r'"%s"\s*:\s*"([^"\\]*)"' % key, head)
+            if match is not None:
+                meta[key] = match.group(1)
+        return meta
+
+    @staticmethod
+    def _usage_from(total: dict) -> dict[str, int]:
+        return {
+            "input": int(total.get("input_tokens") or 0),
+            "output": int(total.get("output_tokens") or 0),
+            "cache_read": int(total.get("cached_input_tokens") or 0),
+            "cache_write": int(total.get("cache_write_input_tokens") or 0),
+        }
+
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
     ) -> Session | None:
@@ -75,16 +104,14 @@ class CodexAdapter:
         started: datetime | None = None
         cwd = ""
         originator = ""
-        meta = json_lines(read_head(path))
-        for obj in meta:
-            if obj.get("type") != "session_meta":
-                continue
-            payload = obj.get("payload") or {}
-            session_id = str(payload.get("session_id") or path.stem)
-            started = parse_iso(payload.get("timestamp"))
-            cwd = str(payload.get("cwd") or "")
-            originator = str(payload.get("originator") or "")
-            break
+        meta_model = ""
+        meta = self._session_meta(read_head(path, limit=256 * 1024))
+        if meta:
+            session_id = str(meta.get("session_id") or path.stem)
+            started = parse_iso(meta.get("timestamp"))
+            cwd = str(meta.get("cwd") or "")
+            originator = str(meta.get("originator") or "")
+            meta_model = str(meta.get("model") or "")
 
         model = ""
         usage: dict[str, int] | None = None
@@ -102,19 +129,16 @@ class CodexAdapter:
                 if payload.get("cwd"):
                     cwd = payload["cwd"]
                 if payload.get("model"):
-                    model = payload["model"]
+                    model = pretty_model(str(payload["model"]))
             elif kind == "event_msg" and payload.get("type") == "token_count":
                 info = payload.get("info") or {}
                 total = info.get("total_token_usage")
                 if isinstance(total, dict):
-                    usage = {
-                        "input": int(total.get("input_tokens") or 0),
-                        "output": int(total.get("output_tokens") or 0),
-                        "cache_read": int(total.get("cached_input_tokens") or 0),
-                        "cache_write": int(
-                            total.get("cache_write_input_tokens") or 0
-                        ),
-                    }
+                    usage = self._usage_from(total)
+            elif kind == "token_usage_record":
+                total = payload.get("usage") or payload.get("thread_token_usage")
+                if isinstance(total, dict):
+                    usage = self._usage_from(total)
             elif kind == "response_item":
                 role = payload.get("role")
                 if role in ("user", "assistant"):
@@ -145,7 +169,7 @@ class CodexAdapter:
                 last_active=last_active,
                 now=now,
             ),
-            model=model,
+            model=model or pretty_model(meta_model),
             last_message=last_text,
             usage=usage,
             extra={"originator": originator} if originator else {},

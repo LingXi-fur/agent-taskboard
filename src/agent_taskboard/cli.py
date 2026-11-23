@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import adapters, checks, config, doctor, gc, gitops, history, prompts, render, scope, stats
+from . import adapters, checks, config, doctor, gc, gitops, history, prompts, render, scope, serve, stats
 from .errors import AtbError, CheckError, ConfigError, SheetError
 from .sheet import (
     STATUSES,
@@ -2439,6 +2439,22 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# serve (local read-only console)
+# --------------------------------------------------------------------------- #
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    return serve.run(
+        repo_root,
+        host=args.host,
+        port=args.port,
+        poll=args.poll,
+        read_only=args.read_only,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -2667,6 +2683,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_sessions.add_argument("--json", action="store_true")
     p_sessions.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
     p_sessions.set_defaults(func=cmd_sessions)
+
+    p_serve = sub.add_parser(
+        "serve", help="serve the local read-only console (stdlib only)"
+    )
+    p_serve.add_argument(
+        "--port", type=int, default=8766, help="port to listen on (default 8766)"
+    )
+    p_serve.add_argument(
+        "--host", default="127.0.0.1",
+        help="address to bind (default 127.0.0.1; anything else prints a "
+             "warning because other machines can reach it)",
+    )
+    p_serve.add_argument(
+        "--poll", type=float, default=5.0, metavar="SECONDS",
+        help="how often to re-check .taskboard/ for live updates "
+             "(default 5 seconds)",
+    )
+    p_serve.add_argument(
+        "--read-only", action="store_true",
+        help="accepted for forward compatibility; phase 1 has no write "
+             "endpoints at all",
+    )
+    p_serve.set_defaults(func=cmd_serve)
 
     return parser
 

@@ -1,0 +1,104 @@
+# The `atb serve` JSON API (v1)
+
+`atb serve` (default <http://127.0.0.1:8766>) exposes a small versioned JSON
+API. It is read-only, standard-library-only, and reuses the exact payload
+builders of `atb status`, `atb review --json`, `atb log` and `atb sessions`:
+what the CLI prints is what the API returns. The web UI under `/` is a client
+of this API and the extension point for other tools.
+
+All timestamps are ISO-8601 with offset (`...+00:00`); `time_local` fields are
+rendered in the server's local timezone. Every response is `application/json;
+charset=utf-8`.
+
+## Conventions
+
+- Unknown routes return `404` with `{"error": "..."}`; unknown task ids too.
+- Unexpected failures return `500` with `{"error": "..."}` and never kill the
+  server.
+- Every request's `Host` header must be one of `127.0.0.1:<port>`,
+  `localhost:<port>`, `[::1]:<port>` or the address given with `--host`;
+  anything else — including a DNS name that resolves to 127.0.0.1 (DNS
+  rebinding) — is rejected with `403` before any data is read. Requests
+  carrying a non-local `Origin` header are rejected the same way. Requests
+  without `Origin` (curl, tests) are fine.
+- The server binds to `127.0.0.1` unless `--host` says otherwise; any
+  non-loopback `--host` prints a warning.
+
+## `GET /api/v1/overview`
+
+The summary strip: `{"target", "repo_root", "upstream", "summary", "active",
+"awaiting_review", "merged_today", "generated_at"}`.
+
+- `target` — the configured target branch (`target` in `config.toml`).
+- `repo_root` — the repository being served; the UI uses it to put this
+  project's sessions first.
+- `upstream` — `{target, upstream, ahead, behind}` from local refs only
+  (`upstream` is `null` without a configured upstream; nothing is fetched).
+- `summary` — task count per status: `todo`, `doing`, `review`, `rework`,
+  `done`, `dropped`.
+- `active` — `doing + review + rework`; `awaiting_review` — `review`.
+- `merged_today` — commits on the target whose subject matches the merge
+  message pattern (`Merge <branch> (<id>: <title>)`), since local midnight.
+
+## `GET /api/v1/tasks`
+
+`{"tasks": [...], "summary": {...}, "upstream": {...}, "generated_at"}` —
+one row per task, the same shape `atb status --json` uses: `id`, `status`,
+`agent`, `title`, `branch`, `missing`, `ahead`, `behind`, `changed_files`,
+`violations`, `dirty`, `idle_seconds`, `last_test`, `ready` (`true`/`false`/
+`null` outside review), `blockers` (`[{code, message}]`, stable codes:
+`missing_branch`, `scope_violation`, `uncommitted`, `test_not_passed`,
+`merge_conflict`, `doctor_fail`), plus `status_history` for review tasks.
+
+## `GET /api/v1/tasks/{id}`
+
+The `atb review --json` payload, plus the full event list:
+
+`{id, title, agent, status, branch, base, scope{denied, outside,
+uncommitted}, test{result, last_run}, activity{dirty, idle_seconds,
+rework_count, status_history}, doctor_fails, diffstat{files, totals},
+conflicts, mergeable, drift, acceptance[{text, checked}], ready, blockers,
+events}`.
+
+`events` is the chronological `atb log` event list (`status`, `test`,
+`rework`, `merge`), each `{kind, timestamp, time_local, text, ...}`.
+
+## `GET /api/v1/tasks/{id}/prompt`
+
+`{id, text}` — the English handoff prompt for the task (what `atb prompt
+--lang en` prints). This is what the UI's "copy handoff" button puts on the
+clipboard. No task state is changed.
+
+## `GET /api/v1/events?day=YYYY-MM-DD&days=N&task=ID`
+
+The day's timeline for the swimlanes: `{"events": [{task, title, agent,
+kind, timestamp, time_local, text, from, to, exit_code, commit}], "count",
+"range"}`. `kind` is `status`, `test`, `rework` or `merge`. With `day`,
+events are filtered to the server's local calendar day; with `days=N`, to
+the last N local days (`range` says which). With `task`, to one task.
+Without any window, all events are returned (this walks each task's
+history, so prefer `day`/`days` for polling).
+
+## `GET /api/v1/sessions?since=SPEC&adapter=NAME`
+
+Exactly what `atb sessions --json` prints: `{"since", "since_spec",
+"adapters", "sessions", "unmapped"}`. Sessions come from the read-only
+adapters (Claude Code, Codex, Gemini CLI, OpenCode, plus plugins registered
+under the `agent_taskboard.adapters` entry-point group) and map to tasks by
+worktree cwd first, branch second; unmapped sessions are free sessions. See
+`atb sessions --help` for `--since` syntax (`6h`, `3d`, a date, ISO). The UI
+shows message summaries truncated; redaction is a display choice made by the
+client, the API stays faithful to the store.
+
+## `GET /api/v1/stream`
+
+Server-sent events. The server re-checks `.taskboard/` (file mtimes/sizes)
+and the target's `HEAD` every `--poll` seconds (default 5) and emits:
+
+```
+event: refresh
+data: {"type": "refresh", "checksum": "…"}
+```
+
+whenever anything changes (also once immediately on connect). Clients refetch
+the endpoints they care about; `EventSource` reconnects by itself.

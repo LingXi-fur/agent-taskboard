@@ -117,7 +117,8 @@ created = 2026-11-14T08:00:00Z
 | Command | Description | Status |
 |---|---|---|
 | `atb init` | Initialize `.taskboard/` and default `config.toml`; check git version | Implemented |
-| `atb new "title" --agent X [--allow G] [--deny G] [--depends ID]` | Create a task sheet from template | Implemented |
+| `atb new "title" --agent X [--allow G] [--deny G] [--depends ID] [--body @FILE\|-] [--copy-to DIR]` | Create a task sheet; `--body` writes the Markdown body from a UTF-8 file or stdin, `--copy-to DIR` also copies the sheet to `DIR/ATB_TASK_<ID>.md` | Implemented |
+| `atb edit ID [--body @FILE\|-] [--title T] [--agent A] [--add-allow G] [--remove-allow G] [--add-deny G] [--remove-deny G] [--copy-to DIR]` | Edit a sheet's body/title/agent and add/remove allow/deny globs without hand-editing TOML (`done`/`dropped` refused; repeatable options) | Implemented |
 | `atb list [--status S]` / `atb show ID` | List task sheets / inspect a single task sheet | Implemented |
 | `atb start ID [--base REV] [--force]` | Validate dependencies, create a git worktree, record `base` & `branch` | Implemented |
 | `atb prompt ID [--lang zh\|en]` | Generate a full handoff prompt (rework notes first, then scope & body) | Implemented |
@@ -126,7 +127,11 @@ created = 2026-11-14T08:00:00Z
 | `atb conflicts [--json]` | Compare active tasks for file overlap, real `merge-tree` conflicts, and base drift | Implemented |
 | `atb review ID [--out FILE] [--lang zh\|en] [--json]` | Generate a Markdown or structured JSON (`ready`/`blockers`) review sheet combining checks, tests, activity & history, doctor hints, diffstat, conflicts, and checklist (flips `doing`/`rework` to `review`) | Implemented |
 | `atb rework ID --note "..."` | Set status to `rework` and append notes so `atb prompt` highlights them first | Implemented |
-| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify checks pass, merge with `--no-ff`, optionally clean up worktree/branch, and push only on `--push` (or `push_after_done = true` unless `--no-push`) | Implemented |
+| `atb done ID [--merge] [--clean] [--force] [--push \| --no-push]` | Verify checks pass, merge with `--no-ff` — refusing tasks that are not ready (the same blockers as `review --json`; `--force` lists and ignores them, `require_ready_for_done = false` only warns) — optionally clean up worktree/branch, and push only on `--push` (or `push_after_done = true` unless `--no-push`) | Implemented |
+| `atb sync ID [--rebase \| --merge] [--dry-run]` | Bring the target up to date inside the task worktree (default `--rebase`; refuses dirty worktrees, aborts conflicts back to the original state, `--dry-run` predicts them with `git merge-tree`) | Implemented |
+| `atb stats [--since YYYY-MM-DD] [--agent NAME] [--json] [--lang zh\|en]` | Per-agent throughput, rework rate, cycle median/P90, review-wait median, and last-test failure rate | Implemented |
+| `atb sessions [--since SPEC] [--adapter NAME] [--redact] [--json] [--lang zh\|en]` | Read-only observation of local Claude Code / Codex / Gemini CLI / OpenCode sessions, mapped to tasks by cwd or branch (other tools via the `agent_taskboard.adapters` entry point) | Implemented |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | Local live console and JSON API v1 (stdlib only, no CDN, fully offline; see `docs/api.md`) | Implemented |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches (`git branch -d` only) for `done`/`dropped` tasks | Implemented |
 | `atb doctor [--json]` | One-shot read-only health check: git version, config, task sheets, active worktrees, leftovers, and orphans | Implemented |
 | `atb log ID [--json] [--verbose]` | Show chronological per-task history: status changes, rework notes, test runs, and merges | Implemented |
