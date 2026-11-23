@@ -93,5 +93,7 @@
   "completedToggle": "已完成（{count}）",
   "currentProject": "当前仓库",
   "unknownProject": "未记录目录",
-  "swimlanes7": "最近 7 天（{from} — {to}）· 按 agent"
+  "swimlanes7": "最近 7 天（{from} — {to}）· 按 agent",
+  "observeNotice": "观察模式：只显示本机 agent 会话",
+  "observeLanes": "最近 24 小时 · 按 agent"
 }

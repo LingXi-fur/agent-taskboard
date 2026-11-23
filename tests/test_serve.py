@@ -190,10 +190,11 @@ class ServeTests(unittest.TestCase):
         self.assertEqual(
             set(payload),
             {
-                "target", "repo_root", "upstream", "summary", "active",
+                "mode", "target", "repo_root", "upstream", "summary", "active",
                 "awaiting_review", "merged_today", "generated_at",
             },
         )
+        self.assertEqual(payload["mode"], "task")
         self.assertEqual(payload["target"], "main")
         self.assertEqual(payload["repo_root"], str(self.repo))
         self.assertEqual(payload["active"], 1)

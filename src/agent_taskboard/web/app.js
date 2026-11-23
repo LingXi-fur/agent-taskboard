@@ -149,26 +149,33 @@ function cycleTheme() {
 }
 
 async function fetchAll() {
-  const [overview, tasks, sessions] = await Promise.all([
-    fetchJSON("/api/v1/overview"),
-    fetchJSON("/api/v1/tasks"),
-    fetchJSON("/api/v1/sessions"),
-  ]);
+  const overview = await fetchJSON("/api/v1/overview");
   state.overview = overview;
-  state.tasks = tasks.tasks;
-  state.sessions = sessions;
+  state.observe = overview.mode === "observe";
+  state.sessions = await fetchJSON("/api/v1/sessions");
 
-  // today first (the swimlanes are "what happened today"); when nothing
-  // happened today, fall back to the last seven days and label the range
-  let events = await fetchJSON(`/api/v1/events?day=${localDate()}`);
-  if (!events.events.length) {
-    events = await fetchJSON("/api/v1/events?days=7");
+  if (state.observe) {
+    state.tasks = [];
+    state.events = [];
+    state.eventsRange = null;
+  } else {
+    const [tasks, today] = await Promise.all([
+      fetchJSON("/api/v1/tasks"),
+      fetchJSON(`/api/v1/events?day=${localDate()}`),
+    ]);
+    state.tasks = tasks.tasks;
+    // today first (the swimlanes are "what happened today"); when nothing
+    // happened today, fall back to the last seven days and label the range
+    let events = today;
+    if (!events.events.length) {
+      events = await fetchJSON("/api/v1/events?days=7");
+    }
+    state.events = events.events;
+    state.eventsRange = events.range || null;
   }
-  state.events = events.events;
-  state.eventsRange = events.range || null;
 
   renderAll();
-  if (state.detail) renderDetail(state.detail.id); // refresh the open panel
+  if (!state.observe && state.detail) renderDetail(state.detail.id);
 }
 
 function startStream() {
@@ -180,6 +187,24 @@ function startStream() {
 /* --------------------------------------------------------------- render */
 
 function renderAll() {
+  const observe = Boolean(state.observe);
+  document.body.classList.toggle("observe-mode", observe);
+  $("observe-notice").hidden = !observe;
+  if (observe) $("observe-notice").textContent = t("observeNotice");
+  $("summary").hidden = observe;
+  $("upstream").hidden = observe;
+  $("task-list-sec").hidden = observe;
+  if (observe) {
+    $("detail-sec").hidden = true;
+    renderObserveLanes();
+    renderSessions();
+    const sessions = (state.sessions && state.sessions.sessions) || [];
+    $("status-line").textContent = fmt(t("statusLine"), {
+      tasks: sessions.length,
+      time: new Date().toLocaleTimeString(),
+    }) + " · " + t("keyboardHint");
+    return;
+  }
   renderSummary();
   renderTaskList();
   renderSwimlanes();
@@ -188,6 +213,77 @@ function renderAll() {
     tasks: state.tasks.length,
     time: new Date().toLocaleTimeString(),
   }) + " · " + t("keyboardHint");
+}
+
+/** Observe mode: a 24-hour lane per adapter built from session timestamps. */
+function renderObserveLanes() {
+  const box = $("swimlanes");
+  box.textContent = "";
+  $("swimlanes-heading").textContent = t("observeLanes");
+  const sessions = (state.sessions && state.sessions.sessions) || [];
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("lanesEmpty");
+    box.append(empty);
+    return;
+  }
+  const now = new Date();
+  const start = new Date(now.getTime() - 24 * 3600 * 1000);
+  const span = 24 * 3600 * 1000;
+  const byAdapter = new Map();
+  for (const session of sessions) {
+    const started = session.started_at ? new Date(session.started_at) : null;
+    const last = session.last_active_at ? new Date(session.last_active_at) : null;
+    if (!started && !last) continue;
+    if (!byAdapter.has(session.adapter)) byAdapter.set(session.adapter, []);
+    byAdapter.get(session.adapter).push({ ...session, started, last });
+  }
+  for (const [adapter, items] of [...byAdapter.entries()].sort()) {
+    const lane = document.createElement("div");
+    lane.className = "lane";
+    const head = document.createElement("div");
+    head.className = "lane-head";
+    head.innerHTML =
+      `<span class="lane-agent">${escapeHTML(adapter)}</span>` +
+      `<span class="muted">${fmt(t("laneEvents"), { count: items.length })}</span>`;
+    lane.append(head);
+    for (const item of items) {
+      const row = document.createElement("div");
+      row.className = "lane-row";
+      const label = document.createElement("span");
+      label.className = "lane-task";
+      label.textContent = String(item.id).slice(-6);
+      const track = document.createElement("div");
+      track.className = "lane-track";
+      const from = item.started && item.started > start ? item.started : start;
+      const to = item.last || now;
+      const left = Math.max(0, (from - start) / span * 100);
+      const width = Math.min(100 - left, (to - from) / span * 100);
+      if (width > 0) {
+        const segment = document.createElement("div");
+        segment.className = "seg";
+        segment.dataset.kind = "doing";
+        const detail = `${adapter} · ${t(`states.${item.state}`)} · ${item.model || "—"} · ${localTime(item.started_at)}–${localTime(item.last_active_at)} · ${item.cwd || ""}`;
+        segment.textContent = t(`states.${item.state}`);
+        segment.title = detail;
+        segment.setAttribute("aria-label", detail);
+        segment.style.left = `${left}%`;
+        segment.style.width = `${Math.max(width, 0.6)}%`;
+        track.append(segment);
+      }
+      row.append(label, track);
+      lane.append(row);
+    }
+    box.append(lane);
+  }
+  const scale = document.createElement("div");
+  scale.className = "lane-scale";
+  scale.textContent = fmt(t("laneScale"), {
+    start: start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    end: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  });
+  box.append(scale);
 }
 
 function renderSummary() {

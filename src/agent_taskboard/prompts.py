@@ -115,6 +115,17 @@ def _render_zh(
     parts.append("- 不要修改 allow 范围之外的文件。")
     parts.append(f"- 提交前先运行测试：`{test_cmd}`。")
     parts.append("")
+    parts.append("## 进度备注")
+    parts.append("")
+    parts.append(
+        f"在任务 worktree 里，三个时间点各运行一次 `atb note {sheet.id} \"…\"`："
+        f"开工时、遇到阻塞时、提交评审前。阻塞时写清卡在哪、需要谁做什么。"
+    )
+    parts.append("")
+    parts.append(f"- 开工：`atb note {sheet.id} \"开工：…\"`")
+    parts.append(f"- 阻塞：`atb note {sheet.id} \"卡在…，需要…\"`")
+    parts.append(f"- 提交评审前：`atb note {sheet.id} \"测试通过，请评审\"`")
+    parts.append("")
     parts.append("## 回报格式")
     parts.append("")
     parts.append("请回报以下内容：")
@@ -170,6 +181,19 @@ def _render_en(
     parts.append("- Do NOT push. Do NOT merge.")
     parts.append("- Do NOT modify files outside the allow list.")
     parts.append(f"- Run the tests before committing: `{test_cmd}`.")
+    parts.append("")
+    parts.append("## Progress notes")
+    parts.append("")
+    parts.append(
+        f"In the task worktree, run `atb note {sheet.id} \"…\"` at three "
+        f"moments: when you start, when you are blocked, and right before "
+        f"handing to review. When blocked, say what is stuck and who must "
+        f"do what."
+    )
+    parts.append("")
+    parts.append(f"- start: `atb note {sheet.id} \"starting: …\"`")
+    parts.append(f"- blocked: `atb note {sheet.id} \"blocked on …; need …\"`")
+    parts.append(f"- before review: `atb note {sheet.id} \"tests pass, ready for review\"`")
     parts.append("")
     parts.append("## Report format")
     parts.append("")

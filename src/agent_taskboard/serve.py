@@ -71,6 +71,7 @@ def _payload_overview(repo_root: Path, cfg: config.Config, rows: list[dict]) -> 
         if row["status"] in summary:
             summary[row["status"]] += 1
     return {
+        "mode": "task",
         "target": cfg.target,
         "repo_root": str(repo_root),
         "upstream": gitops.upstream_status(cfg.target, cwd=repo_root),
@@ -80,6 +81,15 @@ def _payload_overview(repo_root: Path, cfg: config.Config, rows: list[dict]) -> 
         ),
         "awaiting_review": summary["review"],
         "merged_today": _merged_today(repo_root, cfg),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _payload_observe_overview() -> dict:
+    """Overview for ``--observe``: sessions only, no repository at all."""
+    return {
+        "mode": "observe",
+        "repo_root": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -239,14 +249,17 @@ def _parse_iso_local(value: Any) -> datetime | None:
 
 
 def _payload_sessions(
-    repo_root: Path, cfg: config.Config, sheets: list[Sheet],
+    repo_root: Path | None, cfg: config.Config | None, sheets: list[Sheet],
     since_spec: str | None, adapter: str | None,
 ) -> dict:
     """The same data ``atb sessions --json`` prints (phase 2 wired in)."""
     cli = _cli()
     since, spec = cli._parse_sessions_since(since_spec)
     sessions, entries = cli._collect_sessions(since, adapter)
-    worktrees, branches = cli._session_task_maps(cfg, sheets)
+    if cfg is None:
+        worktrees, branches = [], {}
+    else:
+        worktrees, branches = cli._session_task_maps(cfg, sheets)
     rows = []
     for session in sessions:
         task_id = cli._map_session_to_task(session, worktrees, branches)
@@ -268,8 +281,14 @@ def _payload_sessions(
 # change detection for the SSE stream
 # --------------------------------------------------------------------------- #
 
-def _state_checksum(repo_root: Path) -> str:
-    """A cheap fingerprint of .taskboard/ plus the target's HEAD."""
+def _state_checksum(repo_root: Path | None) -> str:
+    """A cheap fingerprint of .taskboard/ plus the target's HEAD.
+
+    In observe mode there is no repository; returning a fresh value on every
+    call makes the SSE stream refresh the page once per poll interval.
+    """
+    if repo_root is None:
+        return f"observe:{time.time_ns()}"
     parts: list[str] = []
     try:
         parts.append(gitops.rev_parse("HEAD", cwd=repo_root))
@@ -299,12 +318,14 @@ class _ServeServer(ThreadingHTTPServer):
         address,
         handler,
         *,
-        repo_root: Path,
+        repo_root: Path | None,
+        observe: bool = False,
         poll: float,
         allowed_hosts: set[str],
     ):
         super().__init__(address, handler)
         self.repo_root = repo_root
+        self.observe = bool(observe) or repo_root is None
         self.poll = poll
         #: Host headers we answer to. Everything else — including a name that
         #: some DNS record points at 127.0.0.1 (DNS rebinding) — gets 403.
@@ -388,6 +409,21 @@ class _RequestHandler(BaseHTTPRequestHandler):
         try:
             if path in STATIC_FILES:
                 self._serve_static(path)
+            elif self.server.observe and path not in (
+                "/api/v1/overview",
+                "/api/v1/sessions",
+                "/api/v1/stream",
+            ):
+                self._send_json(
+                    {
+                        "error": "task endpoints are unavailable in observe "
+                                 "mode (no .taskboard/); only /api/v1/overview, "
+                                 "/api/v1/sessions and /api/v1/stream work"
+                    },
+                    status=404,
+                )
+            elif path == "/api/v1/overview" and self.server.observe:
+                self._send_json(_payload_observe_overview())
             elif path == "/api/v1/overview":
                 repo_root, cfg, sheets = self._context()
                 payload = _payload_tasks(repo_root, cfg, sheets)
@@ -426,16 +462,25 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     )
                 )
             elif path == "/api/v1/sessions":
-                repo_root, cfg, sheets = self._context()
-                self._send_json(
-                    _payload_sessions(
-                        repo_root,
-                        cfg,
-                        sheets,
-                        (query.get("since") or [None])[0],
-                        (query.get("adapter") or [None])[0],
+                if self.server.observe:
+                    self._send_json(
+                        _payload_sessions(
+                            None, None, [],
+                            (query.get("since") or [None])[0],
+                            (query.get("adapter") or [None])[0],
+                        )
                     )
-                )
+                else:
+                    repo_root, cfg, sheets = self._context()
+                    self._send_json(
+                        _payload_sessions(
+                            repo_root,
+                            cfg,
+                            sheets,
+                            (query.get("since") or [None])[0],
+                            (query.get("adapter") or [None])[0],
+                        )
+                    )
             elif path == "/api/v1/stream":
                 self._serve_stream()
             else:
@@ -498,16 +543,18 @@ def nonlocal_host_warning(host: str) -> str | None:
 
 
 def build_server(
-    repo_root: Path,
+    repo_root: Path | None,
     *,
     host: str = _DEFAULT_HOST,
     port: int = 8766,
     poll: float = 5.0,
+    observe: bool = False,
 ) -> _ServeServer:
     server = _ServeServer(
         (host, port),
         _RequestHandler,
         repo_root=repo_root,
+        observe=observe or repo_root is None,
         poll=poll,
         allowed_hosts=set(),
     )
@@ -523,23 +570,33 @@ def run(
     port: int = 8766,
     poll: float = 5.0,
     read_only: bool = True,
+    observe: bool = False,
 ) -> int:
-    """Serve the console until interrupted; returns the exit code."""
+    """Serve the console until interrupted; returns the exit code.
+
+    ``observe=True`` (or ``repo_root=None``) serves sessions only: it works
+    in any directory, no git repository or ``.taskboard/`` needed.
+    """
     if repo_root is None:
-        repo_root = config.find_repo_root()
+        observe = True
     warning = nonlocal_host_warning(host)
     if warning:
         import sys
 
         print(warning, file=sys.stderr)
 
-    server = build_server(repo_root, host=host, port=port, poll=poll)
+    server = build_server(
+        repo_root, host=host, port=port, poll=poll, observe=observe
+    )
     address = server.server_address
     print(
         f"atb serve: http://{address[0]}:{address[1]} "
         f"(poll {poll:g}s, Ctrl-C to stop)"
     )
-    print("read-only: no write endpoints in this phase")
+    if observe:
+        print("observe mode: local agent sessions only (no .taskboard/)")
+    else:
+        print("read-only: no write endpoints in this phase")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

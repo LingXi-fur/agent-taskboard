@@ -131,7 +131,7 @@ created = 2026-11-14T08:00:00Z
 | `atb sync ID [--rebase \| --merge] [--dry-run]` | Bring the target up to date inside the task worktree (default `--rebase`; refuses dirty worktrees, aborts conflicts back to the original state, `--dry-run` predicts them with `git merge-tree`) | Implemented |
 | `atb stats [--since YYYY-MM-DD] [--agent NAME] [--json] [--lang zh\|en]` | Per-agent throughput, rework rate, cycle median/P90, review-wait median, and last-test failure rate | Implemented |
 | `atb sessions [--since SPEC] [--adapter NAME] [--redact] [--json] [--lang zh\|en]` | Read-only observation of local Claude Code / Codex / Gemini CLI / OpenCode sessions, mapped to tasks by cwd or branch (other tools via the `agent_taskboard.adapters` entry point) | Implemented |
-| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | Local live console and JSON API v1 (stdlib only, no CDN, fully offline; see `docs/api.md`) | Implemented |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only] [--observe]` | Local live console and JSON API v1 (stdlib only, no CDN, fully offline; see `docs/api.md`). `--observe` serves local agent sessions only and works in any directory | Implemented |
 | `atb gc [ID...] [--apply] [--include-unmerged] [--json]` | Preview or safely clean up leftover worktrees and branches (`git branch -d` only) for `done`/`dropped` tasks | Implemented |
 | `atb doctor [--json]` | One-shot read-only health check: git version, config, task sheets, active worktrees, leftovers, and orphans | Implemented |
 | `atb log ID [--json] [--verbose]` | Show chronological per-task history: status changes, rework notes, test runs, and merges | Implemented |

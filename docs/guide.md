@@ -389,7 +389,7 @@ Notes:
 | `atb doctor [--json]` | One-shot read-only environment and board health check (one line per session adapter). |
 | `atb log ID [--json] [--verbose]` | Chronological status changes, rework notes, test runs, and merges. |
 | `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | Export a standalone static HTML board (default `zh`, stall threshold `120` min). |
-| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | Serve the local read-only console and JSON API v1 (stdlib only, no CDN). |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only] [--observe]` | Serve the local read-only console and JSON API v1 (stdlib only, no CDN); `--observe` serves local agent sessions only and works in any directory. |
 
 All commands accept `--help`.
 

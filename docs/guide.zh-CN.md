@@ -389,7 +389,7 @@ stateDiagram-v2
 | `atb doctor [--json]` | 一次性只读环境体检（每个会话 adapter 一行）。 |
 | `atb log ID [--json] [--verbose]` | 按时间顺序查看单任务状态变迁、返工、测试和合并记录。 |
 | `atb board --html FILE [--stall MINUTES] [--lang zh\|en]` | 导出单文件静态 HTML 看板（默认 `zh`，卡住阈值默认 `120` 分钟）。 |
-| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only]` | 启动本地只读控制台和 JSON API v1（只用标准库，无 CDN）。 |
+| `atb serve [--port 8766] [--host 127.0.0.1] [--poll SECONDS] [--read-only] [--observe]` | 启动本地只读控制台和 JSON API v1（只用标准库，无 CDN）；`--observe` 只显示本机 agent 会话，可在任意目录启动。 |
 
 所有命令均支持 `--help`。
 
