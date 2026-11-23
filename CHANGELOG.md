@@ -14,6 +14,10 @@ All notable changes to `atb` are documented in this file.
 - Design document for the local console: `docs/design/console.md`, with a Chinese translation in `docs/design/console.zh-CN.md`. / 本地控制台设计文档：`docs/design/console.md`，中文版见 `docs/design/console.zh-CN.md`。
 - Contributor files for the open-source release: `CONTRIBUTING.zh-CN.md`, GitHub issue forms (bug report, feature request, adapter request) and a pull request template. / 面向开源发布的贡献者文件：`CONTRIBUTING.zh-CN.md`，GitHub issue 表单（问题报告、功能建议、新增 agent 适配）和 PR 模板。
 
+### Fixed / 修复
+
+- Scope checks (`check`, `review`, `done --merge`, `board`) now diff the task branch from its merge-base with the target instead of the base recorded at `start`, so target commits absorbed by `atb sync` or a fast-forward are no longer reported as outside the allowed scope. Ahead/behind in `check` is now relative to the target. Falls back to the recorded base when the target branch does not exist. / 范围检查（`check`、`review`、`done --merge`、`board`）改为从任务分支与目标分支的 merge-base 开始比较，不再用 `start` 时记录的 base；分支通过 `atb sync` 或快进吸收的目标分支提交不再被误报为越界。`check` 的领先/落后数改为相对目标分支计算。目标分支不存在时退回记录的 base。
+
 ## [0.2.0] - YYYY-MM-DD
 
 ### Added / 新增
