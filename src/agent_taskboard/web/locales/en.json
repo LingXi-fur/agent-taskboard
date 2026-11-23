@@ -93,5 +93,7 @@
   "completedToggle": "Completed ({count})",
   "currentProject": "this repo",
   "unknownProject": "unknown directory",
-  "swimlanes7": "Last 7 days ({from} — {to}) · per agent"
+  "swimlanes7": "Last 7 days ({from} — {to}) · per agent",
+  "observeNotice": "Observe mode: local agent sessions only",
+  "observeLanes": "Last 24 hours · per agent"
 }

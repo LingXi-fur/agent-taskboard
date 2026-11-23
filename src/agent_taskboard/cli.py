@@ -2463,14 +2463,36 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    repo_root = config.find_repo_root()
-    _require_initialized(repo_root)
+    observe = bool(args.observe)
+    repo_root = None
+    if not observe:
+        try:
+            candidate = config.find_repo_root()
+        except ConfigError as exc:
+            print(
+                f"hint: {exc}; starting in observe mode (local agent sessions "
+                "only). Pass --observe to silence this notice.",
+                file=sys.stderr,
+            )
+            observe = True
+        else:
+            if (candidate / ".taskboard" / "config.toml").exists():
+                repo_root = candidate
+            else:
+                print(
+                    "hint: no .taskboard/ found here; starting in observe "
+                    "mode (local agent sessions only). Run 'atb init' for the "
+                    "full console, or pass --observe to silence this notice.",
+                    file=sys.stderr,
+                )
+                observe = True
     return serve.run(
         repo_root,
         host=args.host,
         port=args.port,
         poll=args.poll,
         read_only=args.read_only,
+        observe=observe,
     )
 
 
@@ -2739,6 +2761,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--read-only", action="store_true",
         help="accepted for forward compatibility; phase 1 has no write "
              "endpoints at all",
+    )
+    p_serve.add_argument(
+        "--observe", action="store_true",
+        help="serve local agent sessions only; works in any directory "
+             "(no git repository or .taskboard/ needed)",
     )
     p_serve.set_defaults(func=cmd_serve)
 

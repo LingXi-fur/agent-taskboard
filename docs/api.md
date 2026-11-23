@@ -24,10 +24,27 @@ charset=utf-8`.
 - The server binds to `127.0.0.1` unless `--host` says otherwise; any
   non-loopback `--host` prints a warning.
 
+## Observe mode
+
+`atb serve --observe` (or `atb serve` outside an atb repository, which falls
+back automatically with a printed hint) serves **sessions only**: no git
+repository and no `.taskboard/` are needed.
+
+- `GET /api/v1/overview` returns `{"mode": "observe", "repo_root": null,
+  "generated_at"}` (task mode returns `"mode": "task"`).
+- `GET /api/v1/sessions` behaves exactly as in task mode; sessions are all
+  unmapped because there are no task worktrees to match.
+- Every task endpoint (`/api/v1/tasks`, `/api/v1/tasks/{id}`,
+  `/api/v1/tasks/{id}/prompt`, `/api/v1/events`) returns `404` with
+  `{"error": "task endpoints are unavailable in observe mode ..."}`.
+- `GET /api/v1/stream` keeps sending `refresh` events; in observe mode the
+  page refreshes once per poll interval (no repository state to hash).
+- The Host allow-list and Origin checks are unchanged.
+
 ## `GET /api/v1/overview`
 
-The summary strip: `{"target", "repo_root", "upstream", "summary", "active",
-"awaiting_review", "merged_today", "generated_at"}`.
+The summary strip: `{"mode", "target", "repo_root", "upstream", "summary",
+"active", "awaiting_review", "merged_today", "generated_at"}`.
 
 - `target` — the configured target branch (`target` in `config.toml`).
 - `repo_root` — the repository being served; the UI uses it to put this
