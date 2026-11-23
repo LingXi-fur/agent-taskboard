@@ -95,5 +95,17 @@
   "unknownProject": "unknown directory",
   "swimlanes7": "Last 7 days ({from} — {to}) · per agent",
   "observeNotice": "Observe mode: local agent sessions only",
-  "observeLanes": "Last 24 hours · per agent"
+  "observeLanes": "Last 24 hours · per agent",
+  "budget": {
+    "heading": "Token budgets",
+    "day": "today",
+    "week": "this week",
+    "of": "{used} / {limit} ({percent}%)",
+    "noData": "no data (limit {limit})",
+    "ok": "✓ ok",
+    "near": "◔ near limit",
+    "over": "✗ over budget",
+    "noDataStatus": "○ no data"
+  },
+  "budgetHeading": "Token budgets"
 }

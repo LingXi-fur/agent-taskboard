@@ -370,6 +370,72 @@ def _fmt_tokens(value: float | None) -> str:
     return str(total)
 
 
+_BUDGET_TEXTS: dict[str, dict[str, str]] = {
+    "zh": {
+        "heading": "预算（token）",
+        "day": "今日",
+        "week": "本周",
+        "of": "{used} / {limit}（{percent}%）",
+        "no_data": "无数据（上限 {limit}）",
+        "ok": "✓ 正常",
+        "near": "◔ 接近上限",
+        "over": "✗ 已超出",
+        "no_data_status": "○ 无数据",
+    },
+    "en": {
+        "heading": "Token budgets",
+        "day": "today",
+        "week": "this week",
+        "of": "{used} / {limit} ({percent}%)",
+        "no_data": "no data (limit {limit})",
+        "ok": "✓ ok",
+        "near": "◔ near limit",
+        "over": "✗ over budget",
+        "no_data_status": "○ no data",
+    },
+}
+
+
+def render_budgets(entries: list[dict], *, lang: str = "zh") -> str:
+    """Render the per-agent token budget section ('' when none configured)."""
+    if not entries:
+        return ""
+    texts = _BUDGET_TEXTS.get(lang, _BUDGET_TEXTS["zh"])
+    lines = [f"## {texts['heading']}", ""]
+    for entry in entries:
+        parts: list[str] = []
+        for label, used_key, limit_key, ratio_key, status_key in (
+            (texts["day"], "used_today", "tokens_per_day", "day_ratio",
+             "day_status"),
+            (texts["week"], "used_week", "tokens_per_week", "week_ratio",
+             "week_status"),
+        ):
+            limit = entry.get(limit_key)
+            if limit is None:
+                continue
+            used = entry.get(used_key)
+            if used is None:
+                parts.append(
+                    f"{label} {texts['no_data'].format(limit=_fmt_tokens(limit))}"
+                    f" {texts['no_data_status']}"
+                )
+                continue
+            ratio = entry.get(ratio_key)
+            percent = f"{ratio * 100:.0f}" if ratio is not None else "?"
+            status = entry.get(status_key) or "no_data"
+            parts.append(
+                f"{label} "
+                + texts["of"].format(
+                    used=_fmt_tokens(used), limit=_fmt_tokens(limit),
+                    percent=percent,
+                )
+                + " "
+                + texts.get(status, status)
+            )
+        lines.append(f"- {entry['agent']}：" + " · ".join(parts))
+    return "\n".join(lines)
+
+
 def _fmt_pct(rate: float | None) -> str:
     return "—" if rate is None else f"{rate * 100:.0f}%"
 

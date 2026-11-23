@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import adapters, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats, usage
+from . import adapters, budgets, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats, usage
 from .sessions import (
     collect_sessions as _collect_sessions,
     map_session_to_task as _map_session_to_task,
@@ -2224,14 +2224,20 @@ def cmd_stats(args: argparse.Namespace) -> int:
     _require_initialized(repo_root)
     sheets = _load_tasks(repo_root)
     since = _parse_since(args.since) if args.since else None
+    cfg = config.load_config(repo_root)
     summary = stats.summarize(
-        repo_root, sheets, since=since, agent=args.agent,
-        cfg=config.load_config(repo_root),
+        repo_root, sheets, since=since, agent=args.agent, cfg=cfg,
     )
+    budget_entries = budgets.compute(cfg)
     if args.json:
+        summary["budgets"] = budget_entries
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
         print(stats.render_stats(summary, lang=args.lang))
+        section = stats.render_budgets(budget_entries, lang=args.lang)
+        if section:
+            print()
+            print(section)
     return 0
 
 

@@ -209,10 +209,58 @@ function renderAll() {
   renderTaskList();
   renderSwimlanes();
   renderSessions();
+  renderBudgets((state.overview && state.overview.budgets) || []);
   $("status-line").textContent = fmt(t("statusLine"), {
     tasks: state.tasks.length,
     time: new Date().toLocaleTimeString(),
   }) + " · " + t("keyboardHint");
+}
+
+function budgetScope(entry, scope) {
+  const isDay = scope === "day";
+  const limit = isDay ? entry.tokens_per_day : entry.tokens_per_week;
+  if (limit == null) return "";
+  const used = isDay ? entry.used_today : entry.used_week;
+  const ratio = isDay ? entry.day_ratio : entry.week_ratio;
+  const status = isDay ? entry.day_status : entry.week_status;
+  const label = t(`budget.${scope}`);
+  if (used == null) {
+    return `<span class="budget-scope"><span class="muted">${escapeHTML(label)}</span> ` +
+      `${escapeHTML(fmt(t("budget.noData"), { limit: fmtTokens(limit) }))} ` +
+      `<span class="budget-status status-${status}">${escapeHTML(t("budget.noDataStatus"))}</span></span>`;
+  }
+  const percent = ratio == null ? "?" : Math.round(ratio * 100);
+  const width = Math.min(100, Math.max(0, ratio == null ? 0 : ratio * 100));
+  return `<span class="budget-scope"><span class="muted">${escapeHTML(label)}</span> ` +
+    `<span class="budget-bar"><span class="budget-fill status-${status}" style="width:${width}%"></span></span>` +
+    `<span class="budget-text">${escapeHTML(fmt(t("budget.of"), {
+      used: fmtTokens(used), limit: fmtTokens(limit), percent,
+    }))}</span>` +
+    `<span class="budget-status status-${status}">${escapeHTML(t(`budget.${status}`))}</span></span>`;
+}
+
+function renderBudgets(entries) {
+  const section = $("budget-sec");
+  const panel = $("budget-panel");
+  panel.textContent = "";
+  if (!entries || !entries.length) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  $("budget-heading").textContent = t("budget.heading");
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "budget-row";
+    const name = document.createElement("span");
+    name.className = "budget-agent";
+    name.textContent = entry.agent;
+    const scopes = document.createElement("span");
+    scopes.className = "budget-scopes";
+    scopes.innerHTML = budgetScope(entry, "day") + budgetScope(entry, "week");
+    row.append(name, scopes);
+    panel.append(row);
+  }
 }
 
 /** Observe mode: a 24-hour lane per adapter built from session timestamps. */
