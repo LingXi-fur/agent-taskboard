@@ -190,7 +190,8 @@ class StatsTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             data = json.loads(result.stdout)
             self.assertEqual(
-                set(data), {"since", "agent_filter", "agents", "missing_history_total"}
+                set(data),
+                {"since", "agent_filter", "agents", "missing_history_total", "budgets"}
             )
             self.assertIsNone(data["since"])
             self.assertIsNone(data["agent_filter"])

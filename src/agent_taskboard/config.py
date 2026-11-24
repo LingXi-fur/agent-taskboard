@@ -111,6 +111,67 @@ class Config:
     config_path: Path = field(default_factory=Path)
 
 
+#: Allowed keys under [budgets.<agent>]; both are optional, token-only.
+BUDGET_KEYS = ("tokens_per_day", "tokens_per_week")
+
+
+@dataclass
+class Budget:
+    """Optional per-agent token budgets (no money)."""
+
+    tokens_per_day: int | None = None
+    tokens_per_week: int | None = None
+
+
+def parse_budgets(raw: Any) -> tuple[dict[str, Budget], list[str]]:
+    """Validate ``[budgets.<agent>]`` tables.
+
+    Returns ``(budgets, errors)``. Invalid entries are reported by errors and
+    skipped — a typo in the config must not make every atb command fail; only
+    ``atb doctor`` surfaces it. Agents without a valid budget are omitted.
+    """
+    budgets: dict[str, Budget] = {}
+    errors: list[str] = []
+    if raw is None:
+        return budgets, errors
+    if not isinstance(raw, dict):
+        return {}, ["[budgets] must be a table of agent tables"]
+    for agent, table in raw.items():
+        if not isinstance(table, dict):
+            errors.append(f"budgets.{agent} must be a table")
+            continue
+        budget = Budget()
+        valid = True
+        for key, value in table.items():
+            if key not in BUDGET_KEYS:
+                errors.append(
+                    f"budgets.{agent}.{key} is not a known key "
+                    f"(use {' / '.join(BUDGET_KEYS)})"
+                )
+                valid = False
+                continue
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+            ):
+                errors.append(
+                    f"budgets.{agent}.{key} must be a positive integer, "
+                    f"got {value!r}"
+                )
+                valid = False
+                continue
+            setattr(budget, key, value)
+        if valid and (budget.tokens_per_day or budget.tokens_per_week):
+            budgets[str(agent)] = budget
+    return budgets, errors
+
+
+def configured_budgets(config: Config) -> tuple[dict[str, Budget], list[str]]:
+    """Parse the budgets stored in the config's preserved unknown keys."""
+    return parse_budgets(config.extra.get("budgets"))
+
+
 def load_config(repo_root: str | os.PathLike) -> Config:
     """Read ``<repo_root>/.taskboard/config.toml`` with defaults filled in."""
     repo_root = Path(repo_root)
