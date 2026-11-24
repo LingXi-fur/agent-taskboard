@@ -23,10 +23,13 @@ from .base import (
     USAGE_SCAN_LIMIT,
     AdapterError,
     Session,
+    SessionEvent,
     add_usage,
     classify_state,
+    evidence_text,
     finish_usage,
     home,
+    iter_lines_bounded,
     json_lines,
     parse_iso,
     pretty_model,
@@ -123,6 +126,61 @@ class ClaudeCodeAdapter:
             return None
         return finish_usage(totals, present)
 
+    def _events_for_file(self, path: Path) -> list[SessionEvent]:
+        """Timestamped, body-free tool/text evidence from a session file."""
+        events: list[SessionEvent] = []
+        seen_usage: set[tuple[str, str]] = set()
+        for raw in iter_lines_bounded(path):
+            if '"tool_use"' not in raw and '"usage"' not in raw and '"text"' not in raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            stamp = parse_iso(obj.get("timestamp"))
+            message = obj.get("message")
+            if not isinstance(message, dict):
+                continue
+            usage = None
+            identity = (
+                str(message.get("id") or ""),
+                str(obj.get("requestId") or ""),
+            )
+            raw_usage = message.get("usage")
+            if isinstance(raw_usage, dict) and identity != ("", ""):
+                if identity not in seen_usage:
+                    seen_usage.add(identity)
+                    totals, present = usage_bucket()
+                    add_usage(totals, present, "input", raw_usage.get("input_tokens"))
+                    add_usage(totals, present, "output", raw_usage.get("output_tokens"))
+                    add_usage(totals, present, "cache_read",
+                              raw_usage.get("cache_read_input_tokens"))
+                    add_usage(totals, present, "cache_write",
+                              raw_usage.get("cache_creation_input_tokens"))
+                    usage = finish_usage(totals, present)
+            content = message.get("content")
+            blocks = content if isinstance(content, list) else [content]
+            parts: list[str] = []
+            for block in blocks:
+                if isinstance(block, dict):
+                    kind = block.get("type")
+                    if kind == "tool_use":
+                        parts.append(evidence_text(
+                            str(block.get("name") or ""), block.get("input")
+                        ))
+                    elif kind == "text":
+                        parts.append(evidence_text(
+                            "", None, str(block.get("text") or "")
+                        ))
+                    # tool_result may embed file contents: never keep it
+                elif isinstance(block, str):
+                    parts.append(evidence_text("", None, block))
+            if parts or usage is not None:
+                events.append(SessionEvent(
+                    stamp, " ".join(part for part in parts if part), usage
+                ))
+        return events
+
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
     ) -> Session | None:
@@ -188,4 +246,5 @@ class ClaudeCodeAdapter:
             last_message=last_text,
             usage=None,
             usage_loader=lambda path=path: self._usage_from_file(path),
+            events_loader=lambda path=path: self._events_for_file(path),
         )

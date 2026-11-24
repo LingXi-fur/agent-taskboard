@@ -26,10 +26,13 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    SessionEvent,
     add_usage,
     classify_state,
+    evidence_text,
     finish_usage,
     home,
+    iter_lines_bounded,
     json_lines,
     parse_iso,
     pretty_model,
@@ -102,6 +105,54 @@ class CodexAdapter:
             totals, present, "cache_write", total.get("cache_write_input_tokens")
         )
         return finish_usage(totals, present)
+
+    def _events_for_file(self, path: Path) -> list[SessionEvent]:
+        """Function-call evidence and per-turn usage from a rollout."""
+        events: list[SessionEvent] = []
+        seen_turns: set[str] = set()
+        for raw in iter_lines_bounded(path):
+            if (
+                '"function_call"' not in raw
+                and '"custom_tool_call"' not in raw
+                and '"token_usage_record"' not in raw
+            ):
+                continue
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            stamp = parse_iso(obj.get("timestamp"))
+            kind = obj.get("type")
+            payload = obj.get("payload") or {}
+            if kind == "response_item":
+                ptype = payload.get("type")
+                if ptype in ("function_call", "custom_tool_call") or payload.get("name"):
+                    arguments = payload.get("arguments")
+                    parsed = None
+                    if isinstance(arguments, str):
+                        try:
+                            parsed = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            parsed = None
+                    elif isinstance(arguments, dict):
+                        parsed = arguments
+                    events.append(SessionEvent(
+                        stamp,
+                        evidence_text(
+                            str(payload.get("name") or ptype or ""), parsed
+                        ),
+                    ))
+            elif kind == "token_usage_record":
+                per_turn = payload.get("usage")
+                record_id = str(
+                    payload.get("response_id") or payload.get("turn_id") or ""
+                )
+                if isinstance(per_turn, dict) and record_id not in seen_turns:
+                    seen_turns.add(record_id)
+                    events.append(SessionEvent(
+                        stamp, "", self._usage_from(per_turn)
+                    ))
+        return events
 
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
@@ -205,5 +256,6 @@ class CodexAdapter:
             model=model or pretty_model(meta_model),
             last_message=last_text,
             usage=usage,
+            events_loader=lambda path=path: self._events_for_file(path),
             extra={"originator": originator} if originator else {},
         )

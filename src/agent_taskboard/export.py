@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import config, gitops, history, sessions, usage
+from . import config, gitops, history, sessions
 from .adapters.base import USAGE_KEYS
 from .sheet import Sheet
 
@@ -134,9 +134,44 @@ def _run_last_ts(repo_root: Path, task_id: str) -> float | None:
     return moment.timestamp()
 
 
-def _usage_field(group: list) -> dict[str, int] | None:
-    summary = usage.summarize_usage(group)
-    tokens = {key: summary[key] for key in USAGE_KEYS if key in summary}
+def _windows(
+    transitions: dict[str, list[tuple[float, str, str]]],
+    sheets: list[Sheet],
+) -> dict[str, tuple[float, float | None]]:
+    """Per-task start→review (or done) windows, from committed transitions."""
+    windows: dict[str, tuple[float, float | None]] = {}
+    for sheet in sheets:
+        events = transitions.get(sheet.id, [])
+        start = next((ts for ts, _f, to in events if to == "doing"), None)
+        if start is None:
+            continue
+        end = next(
+            (ts for ts, _f, to in events if to == "review" and ts >= start),
+            None,
+        )
+        if end is None:
+            end = next(
+                (ts for ts, _f, to in events if to == "done" and ts >= start),
+                None,
+            )
+        windows[sheet.id] = (start, end)
+    return windows
+
+
+def _segment_usage(segments: list) -> dict[str, int] | None:
+    """Sum the usage of a task's session segments (None when none recorded)."""
+    totals: dict[str, int] = {}
+    present: set[str] = set()
+    for segment in segments:
+        if not segment.usage:
+            continue
+        for key in USAGE_KEYS:
+            value = segment.usage.get(key)
+            if value is None:
+                continue
+            totals[key] = totals.get(key, 0) + int(value)
+            present.add(key)
+    tokens = {key: totals[key] for key in USAGE_KEYS if key in present}
     return tokens or None
 
 
@@ -160,11 +195,11 @@ def build_export(
         scan_since = datetime.now(timezone.utc) - timedelta(days=max_days)
     collected, _entries = sessions.collect_sessions(scan_since, None)
     worktrees, branches = sessions.session_task_maps(cfg, sheets)
-    by_task: dict[str, list] = {}
-    for session in collected:
-        mapped = sessions.map_session_to_task(session, worktrees, branches)
-        if mapped is not None:
-            by_task.setdefault(mapped, []).append(session)
+    windows = _windows(transitions, sheets)
+    known_ids = {sheet.id for sheet in sheets}
+    by_task = sessions.task_segments(
+        collected, worktrees, branches, windows, known_ids
+    )
 
     tasks: list[dict] = []
     for sheet in sorted(sheets, key=lambda item: item.id):
@@ -186,20 +221,24 @@ def build_export(
         for stamp, _from, to in task_transitions:
             if to == "done":
                 done_ts = stamp
-        group = by_task.get(sheet.id, [])
+        segments = by_task.get(sheet.id, [])
         sessions_payload = [
             {
-                "adapter": session.adapter,
-                "id": session.id,
-                "started_at": _iso(session.started_at),
-                "last_active_at": _iso(session.last_active_at),
+                "adapter": segment.session.adapter,
+                "id": segment.session.id,
+                "started_at": _iso(segment.session.started_at),
+                "last_active_at": _iso(segment.session.last_active_at),
+                "from": _iso(segment.start),
+                "to": _iso(segment.end),
+                "basis": segment.basis,
+                "usage": segment.usage,
             }
-            for session in sorted(
-                group,
+            for segment in sorted(
+                segments,
                 key=lambda item: (
-                    item.started_at is None,
-                    item.started_at or datetime.min.replace(tzinfo=timezone.utc),
-                    item.id,
+                    item.start is None,
+                    item.start or datetime.min.replace(tzinfo=timezone.utc),
+                    item.session.id,
                 ),
             )
         ]
@@ -216,7 +255,7 @@ def build_export(
             "merge_commit": merges.get(sheet.id),
             "rework_count": history.rework_count(sheet),
             "sessions": sessions_payload,
-            "usage": _usage_field(group),
+            "usage": _segment_usage(segments),
         })
 
     return {

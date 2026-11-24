@@ -81,6 +81,42 @@ def finish_usage(
     return result
 
 
+#: Tool-input keys worth keeping as segmentation evidence (paths and
+#: commands only — never file contents or message bodies).
+EVIDENCE_KEYS = (
+    "command", "cmd", "file_path", "filePath", "path", "notebook_path",
+    "pattern", "cwd", "directory", "description",
+)
+
+
+def evidence_text(
+    name: str = "", payload: Any = None, text: str = ""
+) -> str:
+    """Build a short, body-free evidence string for one tool call/message."""
+    parts: list[str] = []
+    if name:
+        parts.append(str(name)[:80])
+    if isinstance(payload, dict):
+        for key in EVIDENCE_KEYS:
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                parts.append(f"{key}={value[:300]}")
+            elif isinstance(value, (int, float)):
+                parts.append(f"{key}={value}")
+    if text:
+        parts.append(str(text)[:200])
+    return " ".join(parts)
+
+
+@dataclass
+class SessionEvent:
+    """One timestamped, body-free event inside a session (for segmentation)."""
+
+    timestamp: datetime | None
+    evidence: str = ""
+    usage: dict[str, int] | None = None
+
+
 class AdapterError(Exception):
     """Raised when an adapter's store cannot be read or understood."""
 
@@ -102,6 +138,9 @@ class Session:
     #: Optional lazy usage reader (e.g. claude-code streams a big file only
     #: when somebody actually asks for the tokens); excluded from compare.
     usage_loader: Any = field(default=None, repr=False, compare=False)
+    #: Lazy, body-free events for splitting long sessions across tasks.
+    events_loader: Any = field(default=None, repr=False, compare=False)
+    events: list[SessionEvent] = field(default_factory=list, repr=False)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def resolved_usage(self) -> dict[str, int] | None:
@@ -112,6 +151,15 @@ class Session:
             except OSError:
                 self.usage = None
         return self.usage
+
+    def resolved_events(self) -> list[SessionEvent]:
+        """Return the segmentation events, reading them at most once."""
+        if not self.events and self.events_loader is not None:
+            try:
+                self.events = list(self.events_loader() or [])
+            except OSError:
+                self.events = []
+        return self.events
 
 
 class Adapter(Protocol):
@@ -314,6 +362,49 @@ def read_tail(path: Path, limit: int = TAIL_BYTES) -> str:
     if path.suffix == ".zst":
         return _tail_zstd(path, limit)
     return _tail_plain(path, limit)
+
+
+def iter_lines_bounded(
+    path: Path, limit: int = USAGE_SCAN_LIMIT
+) -> Iterator[str]:
+    """Yield decoded lines from a plain/zstd store, bounded and streaming.
+
+    Only ``limit`` compressed bytes are consumed; lines are decoded one at a
+    time so a huge transcript never lands in memory at once.
+    """
+    if path.suffix == ".zst":
+        proc = _stream_decompressed(path)
+        try:
+            assert proc.stdout is not None
+            consumed = 0
+            buffer = b""
+            while consumed < limit:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                consumed += len(chunk)
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    yield line.decode("utf-8", errors="replace")
+            if buffer:
+                yield buffer.decode("utf-8", errors="replace")
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            proc.kill()
+            proc.wait()
+        return
+    consumed = 0
+    try:
+        with path.open("rb") as handle:
+            for raw in handle:
+                consumed += len(raw)
+                if consumed > limit:
+                    break
+                yield raw.decode("utf-8", errors="replace")
+    except OSError:
+        return
 
 
 def _root(primary: str | os.PathLike, *fallbacks: str | os.PathLike) -> Path:
