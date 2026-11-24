@@ -220,8 +220,13 @@ class ExportTests(unittest.TestCase):
             for session in t1["sessions"]:
                 self.assertEqual(
                     set(session),
-                    {"adapter", "id", "started_at", "last_active_at"},
+                    {"adapter", "id", "started_at", "last_active_at",
+                     "from", "to", "basis", "usage"},
                 )
+                # whole-session mapping: the segment spans the whole session
+                self.assertEqual(session["from"], session["started_at"])
+                self.assertEqual(session["to"], session["last_active_at"])
+                self.assertEqual(session["basis"], "worktree")
 
             # usage is the sum of the mapped sessions, tokens only
             self.assertEqual(t1["usage"]["input"], 1200 + 900 + 11223)

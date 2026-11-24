@@ -22,8 +22,10 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    SessionEvent,
     add_usage,
     classify_state,
+    evidence_text,
     finish_usage,
     home,
     parse_iso,
@@ -73,6 +75,43 @@ class GeminiCliAdapter:
             return marker.read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             return ""
+
+    def _events_from_messages(self, messages: list) -> list[SessionEvent]:
+        """Tool-call evidence and per-message tokens from the chat JSON."""
+        events: list[SessionEvent] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            stamp = parse_iso(message.get("timestamp"))
+            parts: list[str] = []
+            for call in message.get("toolCalls") or []:
+                if not isinstance(call, dict):
+                    continue
+                args = call.get("args") or call.get("params") or call.get("input")
+                parts.append(evidence_text(
+                    str(call.get("name") or ""),
+                    args if isinstance(args, dict) else None,
+                ))
+            text = message.get("content")
+            if isinstance(text, str) and text:
+                parts.append(evidence_text("", None, text))
+            usage = None
+            tokens = message.get("tokens")
+            if isinstance(tokens, dict):
+                totals, present = usage_bucket()
+                add_usage(totals, present, "input", tokens.get("input"))
+                add_usage(totals, present, "output", tokens.get("output"))
+                add_usage(totals, present, "cache_read", tokens.get("cached"))
+                total = tokens.get("total")
+                usage = finish_usage(
+                    totals, present,
+                    int(total) if isinstance(total, (int, float)) else None,
+                )
+            if parts or usage is not None:
+                events.append(SessionEvent(
+                    stamp, " ".join(part for part in parts if part), usage
+                ))
+        return events
 
     def _session_from_file(
         self, path: Path, since: datetime, now: datetime
@@ -154,4 +193,7 @@ class GeminiCliAdapter:
             model=model,
             last_message=last_text,
             usage=usage,
+            events_loader=(
+                lambda messages=messages: self._events_from_messages(messages)
+            ),
         )

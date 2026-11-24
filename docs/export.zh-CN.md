@@ -42,9 +42,33 @@ atb export --json --max-days 30               # 限制会话扫描范围
 | `tasks[].sessions` | 数组 | 对应到该任务的 agent 会话（先按 worktree 目录、再按分支）。 |
 | `tasks[].sessions[].adapter` | 字符串 | `claude-code`、`codex`、`gemini-cli`、`opencode`，或插件 adapter 名。 |
 | `tasks[].sessions[].id` | 字符串 | 各工具的**原生**会话 ID（Claude Code 的 `sessionId`、Codex rollout 的会话 id、Gemini 的 `sessionId`、OpenCode 的会话 id）——用它和你自己的数据关联。 |
-| `tasks[].sessions[].started_at` | ISO-8601 字符串（UTC）\| null | 会话开始时间。 |
-| `tasks[].sessions[].last_active_at` | ISO-8601 字符串（UTC）\| null | 最后活动时间。 |
-| `tasks[].usage` | 对象 \| null | 对应会话的 token 合计；没有任何会话记录用量时为 `null`。只包含记录到的键：`input`、`output`、`cache_read`、`cache_write`、`total`。只统计 token，atb 没有价格表。 |
+| `tasks[].sessions[].started_at` | ISO-8601 字符串（UTC）\| null | 整个会话的开始时间。 |
+| `tasks[].sessions[].last_active_at` | ISO-8601 字符串（UTC）\| null | 整个会话的最后活动时间。 |
+| `tasks[].sessions[].from` | ISO-8601 字符串（UTC）\| null | 该**段**的起始时间。 |
+| `tasks[].sessions[].to` | ISO-8601 字符串（UTC）\| null | 该段的结束时间。 |
+| `tasks[].sessions[].basis` | 字符串 | 这一段靠哪种证据归属：`worktree`、`command`、`time_window`。 |
+| `tasks[].sessions[].usage` | 对象 \| null | **这一段**的 token 合计（`input`、`output`、`cache_read`、`cache_write`、`total`）；没有记录时为 `null`。 |
+| `tasks[].usage` | 对象 \| null | 该任务各段用量之和；没有任何段记录用量时为 `null`。只统计 token，atb 没有价格表。 |
+
+## 会话分段
+
+一个长 agent 会话可能横跨多个任务（同一个 OpenCode 窗口先做 T001、再做 T002……）。
+会话会按证据切成段，优先级从高到低：
+
+1. `worktree` —— 工具调用或消息里出现任务 worktree 路径，且与任务单记录的路径精确匹配
+   （最长匹配优先）。
+2. `command` —— 工具调用或消息里出现 `atb start|check|review|sync|done|prompt|note T0xx`。
+3. `time_window` —— 事件落在某任务 `start` 到首次 `review`（没有 review 则为 `done`）
+   之间，且**只有一个**任务的时间段匹配。多个任务重叠又没有其他证据时，这一段
+   不归属——atb 不做猜测。
+
+归属会一直延续到下一次证据切换任务；相邻且同任务的段会合并。同一个原生会话 ID
+可以出现在多个任务下，各自带自己的 `from`/`to`/`basis`/`usage`。
+
+如果会话的工作目录（或分支）本来就属于某个任务，则保持为整段会话，`basis`
+为 `worktree`、`from`/`to` 等于会话起止——已有数据的含义不变。
+
+识别证据只读取工具名、路径和命令；消息正文不会出现在导出里，也不会被缓存。
 
 ## Windows 与性能
 

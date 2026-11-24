@@ -23,9 +23,11 @@ from pathlib import Path
 from .base import (
     AdapterError,
     Session,
+    SessionEvent,
     add_usage,
     classify_state,
     epoch_ms,
+    evidence_text,
     finish_usage,
     home,
     usage_bucket,
@@ -137,6 +139,72 @@ class OpenCodeAdapter:
             except sqlite3.Error as exc:
                 raise AdapterError(f"cannot read messages: {exc}") from exc
 
+    def _events_for(self, session_id: str) -> list[SessionEvent]:
+        """Timestamped, body-free events for one session (read-only)."""
+        db_path = self.db_path()
+        uri = f"file:{db_path.as_posix()}?mode=ro"
+        try:
+            connection = sqlite3.connect(uri, uri=True, timeout=5.0)
+        except sqlite3.Error:
+            return []
+        try:
+            connection.execute("PRAGMA query_only = 1")
+            rows = connection.execute(
+                """
+                SELECT time_created, data FROM session_message
+                WHERE session_id = ? ORDER BY time_created ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            connection.close()
+        events: list[SessionEvent] = []
+        for created_ms, raw in rows:
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            time_block = data.get("time") or {}
+            stamp = epoch_ms(
+                time_block.get("created")
+                if isinstance(time_block, dict) and time_block.get("created")
+                else created_ms
+            )
+            parts: list[str] = []
+            for part in data.get("content") or []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "tool":
+                    state = part.get("state") or {}
+                    payload = state.get("input") if isinstance(state, dict) else None
+                    parts.append(evidence_text(str(part.get("name") or ""), payload))
+                elif part.get("type") == "text":
+                    parts.append(evidence_text("", None, str(part.get("text") or "")))
+            usage = None
+            tokens = data.get("tokens")
+            if isinstance(tokens, dict):
+                usage = {}
+                for source, key in (
+                    ("input", "input"), ("output", "output"),
+                    ("cache_read", "cache_read"), ("cache_write", "cache_write"),
+                    ("cached", "cache_read"), ("total", "total"),
+                ):
+                    value = tokens.get(source)
+                    if isinstance(value, (int, float)):
+                        usage[key] = int(value)
+                usage = usage or None
+            if parts or usage is not None:
+                events.append(
+                    SessionEvent(stamp, " ".join(part for part in parts if part), usage)
+                )
+        return events
+
     def _message_text(self, raw) -> str:
         if not raw:
             return ""
@@ -202,6 +270,9 @@ class OpenCodeAdapter:
             model=model,
             last_message="",
             usage=usage,
+            events_loader=(
+                lambda sid=str(session_id): self._events_for(sid)
+            ),
         )
         if time_archived is not None:
             session.extra["archived"] = True

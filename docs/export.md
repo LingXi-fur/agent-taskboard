@@ -44,9 +44,39 @@ JSON is the only output format, and stdout contains nothing else.
 | `tasks[].sessions` | array | Agent sessions mapped to this task (worktree cwd first, branch second). |
 | `tasks[].sessions[].adapter` | string | `claude-code`, `codex`, `gemini-cli`, `opencode`, or a plugin adapter name. |
 | `tasks[].sessions[].id` | string | The tool's **native** session id (Claude Code `sessionId`, Codex rollout session id, Gemini `sessionId`, OpenCode session id) — use it to join your own data. |
-| `tasks[].sessions[].started_at` | ISO-8601 string (UTC) \| null | Session start. |
-| `tasks[].sessions[].last_active_at` | ISO-8601 string (UTC) \| null | Last activity. |
-| `tasks[].usage` | object \| null | Token totals of the mapped sessions, `null` when no session recorded tokens. Keys are only present when recorded: `input`, `output`, `cache_read`, `cache_write`, `total`. Tokens only — atb has no price table. |
+| `tasks[].sessions[].started_at` | ISO-8601 string (UTC) \| null | Session start (the whole session). |
+| `tasks[].sessions[].last_active_at` | ISO-8601 string (UTC) \| null | Last activity (the whole session). |
+| `tasks[].sessions[].from` | ISO-8601 string (UTC) \| null | Start of this **segment** of the session. |
+| `tasks[].sessions[].to` | ISO-8601 string (UTC) \| null | End of this segment. |
+| `tasks[].sessions[].basis` | string | How the segment was attributed: `worktree`, `command` or `time_window`. |
+| `tasks[].sessions[].usage` | object \| null | Token totals of **this segment** (`input`, `output`, `cache_read`, `cache_write`, `total`); `null` when the store recorded nothing for it. |
+| `tasks[].usage` | object \| null | Sum of the task's segment usages, `null` when no segment recorded tokens. Tokens only — atb has no price table. |
+
+## Session segmentation
+
+One long agent session can span several tasks (one OpenCode window doing
+T001, then T002, …). Sessions are split into segments with evidence,
+highest priority first:
+
+1. `worktree` — a tool call or message mentions a task worktree path
+   exactly as recorded in the task sheets (longest match wins).
+2. `command` — a tool call or message contains
+   `atb start|check|review|sync|done|prompt|note T0xx`.
+3. `time_window` — the event falls between a task's `start` and its first
+   `review` (or `done` when there is no review) and **exactly one** task's
+   window matches. Overlapping windows with no other evidence stay
+   unattributed — atb never guesses.
+
+Attribution carries forward until the next evidence switches it. Adjacent
+segments of the same task are merged. The same native session id may appear
+under several tasks, each with its own `from`/`to`/`basis`/`usage`.
+
+A session whose working directory (or branch) already belongs to one task
+stays a single whole-session segment with `basis: "worktree"`, `from`/`to`
+equal to the session bounds — existing data keeps its meaning.
+
+Only tool names, paths and commands are read for evidence; message bodies
+are never stored in the export or in a cache.
 
 ## Windows and performance
 
