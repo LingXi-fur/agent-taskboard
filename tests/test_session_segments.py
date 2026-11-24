@@ -120,10 +120,14 @@ class SegmentUnitTests(unittest.TestCase):
         self.assertEqual(segments[0].usage, {"input": 10, "total": 10})
 
     def test_whole_session_mapping_unchanged(self):
+        # Production worktree paths come from session_task_maps(), which
+        # resolves them; do the same here so the cwd comparison also holds on
+        # Windows, where "/wts/T001" resolves to a drive-qualified path.
+        self.worktrees = [(path.resolve(), task) for path, task in self.worktrees]
         events = [SessionEvent(T0, "Read file=/wts/T002/a.py")]
         session = Session(
             adapter="opencode", id="ses-whole",
-            cwd="/wts/T001/sub", started_at=T0,
+            cwd=str(self.worktrees[0][0] / "sub"), started_at=T0,
             last_active_at=T0 + timedelta(hours=2),
             usage={"input": 500, "output": 5, "total": 505},
             events=events,
