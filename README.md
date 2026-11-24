@@ -139,6 +139,7 @@ created = 2026-11-14T08:00:00Z
 | `atb board --html out.html [--stall MIN] [--lang zh\|en]` | Export a standalone static HTML board with `Dirty`/`Idle`/`Ready` columns (hover shows all blockers), stall highlighting, and zh/en localization (default `zh`) | Implemented |
 | `atb dispatch [--json] [--lang zh\|en]` | Print a forwarding checklist (project → window/agent → task) for active tasks | Implemented |
 | `atb watch [--interval S] [--timeout S] [--stall MIN] [--activity] [--json]` | Block until a task status/commit/new-sheet change, a stall, or an activity change, then print a summary and exit (exit 3 on timeout) | Implemented |
+| `atb export --json [--since YYYY-MM-DD] [--max-days N]` | Versioned, read-only JSON export of tasks, native agent session ids and token usage for other tools; see `docs/export.md` | Implemented |
 
 ### Watching for progress
 

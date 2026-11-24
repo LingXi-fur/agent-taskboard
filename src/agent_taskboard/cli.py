@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import adapters, budgets, checks, config, doctor, gc, gitops, history, notes, prompts, render, scope, serve, stats, usage
+from . import adapters, budgets, checks, config, doctor, export, gc, gitops, history, notes, prompts, render, scope, serve, stats, usage
 from .sessions import (
     collect_sessions as _collect_sessions,
     map_session_to_task as _map_session_to_task,
@@ -2242,6 +2242,29 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# export (stable read-only JSON for other tools)
+# --------------------------------------------------------------------------- #
+
+def cmd_export(args: argparse.Namespace) -> int:
+    if not args.json:
+        raise AtbError(
+            "usage: atb export --json [--since YYYY-MM-DD] [--max-days N] "
+            "(the export only prints JSON)"
+        )
+    repo_root = config.find_repo_root()
+    _require_initialized(repo_root)
+    cfg = config.load_config(repo_root)
+    sheets = _load_tasks(repo_root)
+    since_ts = _parse_since(args.since) if args.since else None
+    payload = export.build_export(
+        repo_root, cfg, sheets,
+        since_ts=since_ts, max_days=args.max_days,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # sessions (agent adapters, read-only)
 # --------------------------------------------------------------------------- #
 
@@ -2727,6 +2750,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--json", action="store_true")
     p_stats.add_argument("--lang", choices=["zh", "en"], default="zh", help="output language")
     p_stats.set_defaults(func=cmd_stats)
+    p_export = sub.add_parser(
+        "export", help="stable read-only JSON export for other tools"
+    )
+    p_export.add_argument(
+        "--json", action="store_true",
+        help="required: print the schema-versioned export as JSON",
+    )
+    p_export.add_argument(
+        "--since", metavar="YYYY-MM-DD",
+        help="only tasks whose last activity is on or after this local date",
+    )
+    p_export.add_argument(
+        "--max-days", type=int, default=None, metavar="N",
+        help="only scan sessions active in the last N days "
+             "(default: all history)",
+    )
+    p_export.set_defaults(func=cmd_export)
+
     p_sessions = sub.add_parser(
         "sessions", help="list local agent sessions (read-only, all stores)"
     )
