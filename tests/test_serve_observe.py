@@ -83,6 +83,27 @@ class ObserveModeTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read().decode("utf-8"))
 
+    def test_server_bind_does_not_call_reverse_dns(self):
+        """HTTPServer's getfqdn() lookup hangs on CI runners without DNS.
+
+        The macOS CI jobs sat in server_bind for minutes while the socket was
+        already listening, so every request timed out. Building a server must
+        never touch getfqdn.
+        """
+        from unittest import mock
+
+        with mock.patch(
+            "socket.getfqdn",
+            side_effect=AssertionError("server_bind must not call getfqdn"),
+        ):
+            server = serve.build_server(
+                None, host="127.0.0.1", port=0, poll=5, observe=True
+            )
+            try:
+                self.assertEqual(server.server_name, "127.0.0.1")
+            finally:
+                server.server_close()
+
     def test_overview_reports_observe_mode(self):
         status, payload = self._get("/api/v1/overview")
         self.assertEqual(status, 200)

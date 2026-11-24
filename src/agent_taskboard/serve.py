@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import socketserver
 import subprocess
 import threading
 import time
@@ -315,6 +316,21 @@ def _state_checksum(repo_root: Path | None) -> str:
 
 class _ServeServer(ThreadingHTTPServer):
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        """Bind without the reverse-DNS lookup ``HTTPServer`` performs.
+
+        ``HTTPServer.server_bind`` calls ``socket.getfqdn(host)``. On machines
+        without working DNS (GitHub's macOS runners) that lookup can hang for
+        minutes: the socket is already listening, so clients connect and then
+        time out while ``serve_forever`` has not started yet. atb only serves
+        loopback and never puts the host name in a response, so use the
+        address as-is.
+        """
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
     def __init__(
         self,
