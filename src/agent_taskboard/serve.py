@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import socketserver
 import subprocess
 import threading
 import time
@@ -315,6 +317,21 @@ def _state_checksum(repo_root: Path | None) -> str:
 class _ServeServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def server_bind(self) -> None:
+        """Bind without the reverse-DNS lookup ``HTTPServer`` performs.
+
+        ``HTTPServer.server_bind`` calls ``socket.getfqdn(host)``. On machines
+        without working DNS (GitHub's macOS runners) that lookup can hang for
+        minutes: the socket is already listening, so clients connect and then
+        time out while ``serve_forever`` has not started yet. atb only serves
+        loopback and never puts the host name in a response, so use the
+        address as-is.
+        """
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
     def __init__(
         self,
         address,
@@ -579,6 +596,13 @@ def run(
     ``observe=True`` (or ``repo_root=None``) serves sessions only: it works
     in any directory, no git repository or ``.taskboard/`` needed.
     """
+    # Test/diagnostic hook: when the test suite asks for it, dump every
+    # thread's stack to stderr after 10s so a hung request explains itself.
+    # Normal runs never set this variable.
+    if os.environ.get("ATB_TEST_FAULTHANDLER") == "1":
+        import faulthandler
+
+        faulthandler.dump_traceback_later(10, exit=False, repeat=False)
     if repo_root is None:
         observe = True
     warning = nonlocal_host_warning(host)

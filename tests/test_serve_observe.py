@@ -83,6 +83,27 @@ class ObserveModeTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read().decode("utf-8"))
 
+    def test_server_bind_does_not_call_reverse_dns(self):
+        """HTTPServer's getfqdn() lookup hangs on CI runners without DNS.
+
+        The macOS CI jobs sat in server_bind for minutes while the socket was
+        already listening, so every request timed out. Building a server must
+        never touch getfqdn.
+        """
+        from unittest import mock
+
+        with mock.patch(
+            "socket.getfqdn",
+            side_effect=AssertionError("server_bind must not call getfqdn"),
+        ):
+            server = serve.build_server(
+                None, host="127.0.0.1", port=0, poll=5, observe=True
+            )
+            try:
+                self.assertEqual(server.server_name, "127.0.0.1")
+            finally:
+                server.server_close()
+
     def test_overview_reports_observe_mode(self):
         status, payload = self._get("/api/v1/overview")
         self.assertEqual(status, 200)
@@ -151,6 +172,8 @@ class ObserveAutoSwitchTests(unittest.TestCase):
         port = _free_port()
         env = os.environ.copy()
         env["PYTHONPATH"] = str(SRC)
+        # ask the server to dump all thread stacks after 10s (test-only hook)
+        env["ATB_TEST_FAULTHANDLER"] = "1"
         env["ATB_CLAUDE_HOME"] = str(self.base / "claude-home")
         for key in ("ATB_CODEX_HOME", "ATB_GEMINI_HOME", "ATB_OPENCODE_HOME"):
             env[key] = str(self.base / f"empty-{key}")
@@ -198,7 +221,7 @@ class ObserveAutoSwitchTests(unittest.TestCase):
             _, stderr = process.communicate()
         self.fail(
             "server did not start: returncode=%r last_error=%s stderr=%s"
-            % (process.returncode, last_error, (stderr or "")[-2000:])
+            % (process.returncode, last_error, (stderr or "")[-6000:])
         )
 
     def test_starts_in_observe_mode_outside_a_repository(self):
