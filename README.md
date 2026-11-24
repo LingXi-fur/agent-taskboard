@@ -160,6 +160,28 @@ atb watch --stall 30 --activity --timeout 3600
 - `--json` — emit structured changes (`id`, `kind`, `from`, `to`, `text`), with
   `kind` one of `status`/`commits`/`new_task`/`stall`/`activity`/`branch_deleted`/`branch_rewritten`/`sheet_error`.
 
+## Token budgets (optional)
+
+`.taskboard/config.toml` can cap how many tokens each agent may use. Tokens
+only — `atb` has no price table and never reports money:
+
+```toml
+[budgets.opencode]
+tokens_per_day = 50000000
+tokens_per_week = 200000000
+
+[budgets.claude-code]
+tokens_per_day = 30000000
+```
+
+Both keys are optional; the agent name is the adapter name shown by
+`atb sessions` (`claude-code`, `codex`, `gemini-cli`, `opencode`). Usage is
+attributed to the local day/week (Monday start) of each session's last
+activity. `atb stats` prints a "Token budgets" section (✓ ok / ◔ near limit
+from 80% / ✗ over budget at 100% / ○ no data), the console shows a budget
+panel below the task table, and `/api/v1/overview` exposes `budgets`.
+Invalid entries are reported by `atb doctor`.
+
 ## Principles
 
 - **Local-only & zero dependencies**: Standard-library Python + `git` CLI. All state lives as plain text under `.taskboard/`.

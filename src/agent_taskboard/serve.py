@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from . import config, gitops, history, prompts
+from . import budgets, config, gitops, history, prompts
 from .adapters.base import AdapterError  # noqa: F401  (documented contract)
 from .errors import AtbError
 from .sheet import STATUSES, Sheet
@@ -81,6 +81,7 @@ def _payload_overview(repo_root: Path, cfg: config.Config, rows: list[dict]) -> 
         ),
         "awaiting_review": summary["review"],
         "merged_today": _merged_today(repo_root, cfg),
+        "budgets": budgets.compute(cfg),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -90,6 +91,7 @@ def _payload_observe_overview() -> dict:
     return {
         "mode": "observe",
         "repo_root": None,
+        "budgets": [],
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

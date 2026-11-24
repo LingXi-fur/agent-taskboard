@@ -307,6 +307,31 @@ def _check_upstream(cfg: config.Config | None, repo_root: Path) -> dict[str, Any
     )
 
 
+def _check_budgets(cfg: config.Config | None) -> dict[str, Any]:
+    """Report invalid [budgets.*] config; never more than a config-level issue."""
+    if cfg is None:
+        return _check_entry(
+            "budgets", "INFO", "skipped: config could not be loaded"
+        )
+    budgets, errors = config.configured_budgets(cfg)
+    if errors:
+        return _check_entry(
+            "budgets",
+            "FAIL",
+            "invalid token budget config: " + "; ".join(errors),
+            "use [budgets.<agent>] with positive integer tokens_per_day / "
+            "tokens_per_week",
+        )
+    if not budgets:
+        return _check_entry(
+            "budgets", "INFO", "no token budgets configured"
+        )
+    return _check_entry(
+        "budgets", "OK",
+        f"{len(budgets)} agent budget(s): " + ", ".join(sorted(budgets)),
+    )
+
+
 def _check_gitignore(repo_root: Path) -> dict[str, Any]:
     """WARN when local-only .taskboard state could be committed by mistake."""
     path = repo_root / ".gitignore"
@@ -407,6 +432,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
     leftover_item = _check_gc_leftovers(valid_sheets, cfg, repo_root)
     orphan_item = _check_orphan_worktrees(valid_sheets, cfg, repo_root)
     gitignore_item = _check_gitignore(repo_root)
+    budget_item = _check_budgets(cfg)
     adapter_items = _check_adapters()
 
     items = [
@@ -418,6 +444,7 @@ def run_doctor(repo_root: Path) -> tuple[dict[str, Any], int]:
         leftover_item,
         orphan_item,
         gitignore_item,
+        budget_item,
     ] + adapter_items
     has_fail = any(item["status"] == "FAIL" for item in items)
     has_warn = any(item["status"] == "WARN" for item in items)

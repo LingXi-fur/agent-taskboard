@@ -88,6 +88,7 @@ class ObserveModeTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["mode"], "observe")
         self.assertIsNone(payload["repo_root"])
+        self.assertEqual(payload["budgets"], [])
 
     def test_sessions_work_in_observe_mode(self):
         status, payload = self._get("/api/v1/sessions")

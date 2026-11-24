@@ -191,7 +191,7 @@ class ServeTests(unittest.TestCase):
             set(payload),
             {
                 "mode", "target", "repo_root", "upstream", "summary", "active",
-                "awaiting_review", "merged_today", "generated_at",
+                "awaiting_review", "merged_today", "budgets", "generated_at",
             },
         )
         self.assertEqual(payload["mode"], "task")

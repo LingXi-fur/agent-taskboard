@@ -153,6 +153,27 @@ atb watch --stall 30 --activity --timeout 3600
 - `--activity`：任务未提交文件数变化时告警（如 `T009 未提交改动 0 → 5`），代表 Agent 开工了。
 - `--json`：输出结构化的变化列表（`id`、`kind`、`from`、`to`、`text`），`kind` 取 `status`/`commits`/`new_task`/`stall`/`activity`/`branch_deleted`/`branch_rewritten`/`sheet_error`。
 
+## Token 预算（可选）
+
+`.taskboard/config.toml` 可以给每个 agent 设置 token 上限。只统计 token——
+`atb` 没有价格表，也不显示金额：
+
+```toml
+[budgets.opencode]
+tokens_per_day = 50000000
+tokens_per_week = 200000000
+
+[budgets.claude-code]
+tokens_per_day = 30000000
+```
+
+两个键都可选；agent 名用 `atb sessions` 显示的 adapter 名（`claude-code`、
+`codex`、`gemini-cli`、`opencode`）。用量按会话最后活动时间归属到本地自然日/
+自然周（周一为一周开始）。`atb stats` 会多出"预算（token）"一节（✓ 正常 /
+◔ 接近上限（80% 起）/ ✗ 已超出（100% 起）/ ○ 无数据），控制台在任务表下方
+显示预算面板，`/api/v1/overview` 返回 `budgets` 字段；配置写错时 `atb doctor`
+会报告出来。
+
 ## 设计原则
 
 - **纯本地、零依赖**：仅使用 Python 标准库与 `git` 命令行，所有状态以纯文本保存在 `.taskboard/`。

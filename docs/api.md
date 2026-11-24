@@ -31,7 +31,7 @@ back automatically with a printed hint) serves **sessions only**: no git
 repository and no `.taskboard/` are needed.
 
 - `GET /api/v1/overview` returns `{"mode": "observe", "repo_root": null,
-  "generated_at"}` (task mode returns `"mode": "task"`).
+  "budgets": [], "generated_at"}` (task mode returns `"mode": "task"`).
 - `GET /api/v1/sessions` behaves exactly as in task mode; sessions are all
   unmapped because there are no task worktrees to match.
 - Every task endpoint (`/api/v1/tasks`, `/api/v1/tasks/{id}`,
@@ -44,7 +44,7 @@ repository and no `.taskboard/` are needed.
 ## `GET /api/v1/overview`
 
 The summary strip: `{"mode", "target", "repo_root", "upstream", "summary",
-"active", "awaiting_review", "merged_today", "generated_at"}`.
+"active", "awaiting_review", "merged_today", "budgets", "generated_at"}`.
 
 - `target` — the configured target branch (`target` in `config.toml`).
 - `repo_root` — the repository being served; the UI uses it to put this
@@ -56,6 +56,14 @@ The summary strip: `{"mode", "target", "repo_root", "upstream", "summary",
 - `active` — `doing + review + rework`; `awaiting_review` — `review`.
 - `merged_today` — commits on the target whose subject matches the merge
   message pattern (`Merge <branch> (<id>: <title>)`), since local midnight.
+- `budgets` — one entry per agent with a `[budgets.<agent>]` table in
+  `config.toml` (empty list when none): `{agent, tokens_per_day,
+  tokens_per_week, used_today, used_week, day_ratio, week_ratio,
+  day_status, week_status, status}`. Usage is attributed to the local
+  calendar day/week (Monday start) of each session's last activity;
+  `used_*` is `null` when no session in that window recorded tokens, and
+  `status` is one of `ok`, `near` (>= 80%), `over` (>= 100%), `no_data`.
+  Tokens only — atb does not price anything.
 
 ## `GET /api/v1/tasks`
 

@@ -95,5 +95,17 @@
   "unknownProject": "未记录目录",
   "swimlanes7": "最近 7 天（{from} — {to}）· 按 agent",
   "observeNotice": "观察模式：只显示本机 agent 会话",
-  "observeLanes": "最近 24 小时 · 按 agent"
+  "observeLanes": "最近 24 小时 · 按 agent",
+  "budget": {
+    "heading": "Token 预算",
+    "day": "今日",
+    "week": "本周",
+    "of": "{used} / {limit}（{percent}%）",
+    "noData": "无数据（上限 {limit}）",
+    "ok": "✓ 正常",
+    "near": "◔ 接近上限",
+    "over": "✗ 已超出",
+    "noDataStatus": "○ 无数据"
+  },
+  "budgetHeading": "Token 预算"
 }
