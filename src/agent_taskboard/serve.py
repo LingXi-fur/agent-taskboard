@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import threading
@@ -579,6 +580,13 @@ def run(
     ``observe=True`` (or ``repo_root=None``) serves sessions only: it works
     in any directory, no git repository or ``.taskboard/`` needed.
     """
+    # Test/diagnostic hook: when the test suite asks for it, dump every
+    # thread's stack to stderr after 10s so a hung request explains itself.
+    # Normal runs never set this variable.
+    if os.environ.get("ATB_TEST_FAULTHANDLER") == "1":
+        import faulthandler
+
+        faulthandler.dump_traceback_later(10, exit=False, repeat=False)
     if repo_root is None:
         observe = True
     warning = nonlocal_host_warning(host)

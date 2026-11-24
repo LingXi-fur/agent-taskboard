@@ -151,6 +151,8 @@ class ObserveAutoSwitchTests(unittest.TestCase):
         port = _free_port()
         env = os.environ.copy()
         env["PYTHONPATH"] = str(SRC)
+        # ask the server to dump all thread stacks after 10s (test-only hook)
+        env["ATB_TEST_FAULTHANDLER"] = "1"
         env["ATB_CLAUDE_HOME"] = str(self.base / "claude-home")
         for key in ("ATB_CODEX_HOME", "ATB_GEMINI_HOME", "ATB_OPENCODE_HOME"):
             env[key] = str(self.base / f"empty-{key}")
@@ -198,7 +200,7 @@ class ObserveAutoSwitchTests(unittest.TestCase):
             _, stderr = process.communicate()
         self.fail(
             "server did not start: returncode=%r last_error=%s stderr=%s"
-            % (process.returncode, last_error, (stderr or "")[-2000:])
+            % (process.returncode, last_error, (stderr or "")[-6000:])
         )
 
     def test_starts_in_observe_mode_outside_a_repository(self):
